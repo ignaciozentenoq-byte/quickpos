@@ -2270,10 +2270,13 @@ async function mostrarColaVentas() {
           errorStr = '<div style="font-size:11px;color:var(--text3);margin-top:3px">Último error: ' + v.ultimoError + '</div>';
         }
 
-        // Botón diferenciado
+        // Botones diferenciados
         var btnStr = '';
         if (esPermanente) {
-          btnStr = '<button data-id="' + v.id + '" class="btn-reintentar" style="margin-top:8px;padding:5px 12px;border-radius:6px;border:1px solid var(--red);background:transparent;color:var(--red);font-size:11px;font-weight:600;cursor:pointer">↻ Reintentar manualmente</button>';
+          btnStr = '<div style="display:flex;gap:6px;margin-top:8px">' +
+            '<button data-id="' + v.id + '" class="btn-reintentar" style="flex:1;padding:5px 10px;border-radius:6px;border:1px solid var(--red);background:transparent;color:var(--red);font-size:11px;font-weight:600;cursor:pointer">↻ Reintentar</button>' +
+            '<button data-id="' + v.id + '" class="btn-eliminar-cola" style="padding:5px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);color:var(--text3);font-size:11px;cursor:pointer">🗑 Eliminar</button>' +
+          '</div>';
         } else if (esPendiente) {
           btnStr = '<button data-id="' + v.id + '" class="btn-reintentar" style="margin-top:6px;padding:4px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:11px;cursor:pointer">↻ Reintentar ahora</button>';
         }
@@ -2356,13 +2359,26 @@ window.procesarCola     = procesarCola;
 window.recuperarLocks   = recuperarLocks;
 window.actualizarBadge  = actualizarBadge;
 
-// Event delegation para botones reintentar en la lista de cola
+// Event delegation para botones de la lista de cola
 document.addEventListener('click', function(e) {
-  if (e.target && e.target.classList.contains('btn-reintentar')) {
-    var id = e.target.getAttribute('data-id');
-    if (id) reintentarVenta(id);
-  }
+  var id = e.target.getAttribute('data-id');
+  if (!id) return;
+  if (e.target.classList.contains('btn-reintentar')) reintentarVenta(id);
+  if (e.target.classList.contains('btn-eliminar-cola')) eliminarDeCola(id);
 });
+
+async function eliminarDeCola(id) {
+  var db = await initDB();
+  await new Promise(function(res, rej) {
+    var tx  = db.transaction('ventas', 'readwrite');
+    var req = tx.objectStore('ventas').delete(id);
+    req.onsuccess = res;
+    req.onerror   = function(e) { rej(e.target.error); };
+  });
+  await actualizarBadge();
+  showToast('Registro eliminado de la cola', 'info');
+  mostrarColaVentas(); // refrescar el modal
+}
 window.mostrarColaVentas = mostrarColaVentas;
 
 // ── Health check — función de nivel superior (scope global) ──
