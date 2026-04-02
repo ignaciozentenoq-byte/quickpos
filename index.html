@@ -652,6 +652,10 @@ tr:hover .tbl-row-acts{opacity:1;}
         <button class="tb-btn" onclick="window.print()">🖨 Imprimir</button>
         <button class="tb-btn" onclick="showToast('Exportando Excel…','info')">⬇ Exportar</button>
         <button class="tb-btn danger" onclick="showToast('Cerrando turno…','success')">⏹ Cerrar turno</button>
+        <button class="tb-btn" onclick="mostrarColaVentas()" style="position:relative;padding-right:20px">
+          📋 Cola
+          <span id="queue-badge" style="display:none;position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;border-radius:9px;background:var(--amber);color:#fff;font-size:10px;font-weight:700;align-items:center;justify-content:center;padding:0 4px">0</span>
+        </button>
       </div>
       <div class="rpt-body">
         <div class="metrics-grid">
@@ -1086,6 +1090,7 @@ function applyMode(mode) {
   if(mode==='cajero'){
     document.getElementById('pp-title').textContent='Pedidos pendientes';
     seedDemoPending();
+  iniciarCola();
   } else if(mode==='vendedor'){
     document.getElementById('pp-title').textContent='Mis pedidos';
   }
@@ -1380,12 +1385,26 @@ function downloadDTE() {
 
 function confirmCobro(){
   closeVuelto();
-  var total = getTotal();
-  var ref   = document.getElementById('order-ref').textContent.replace('#','').trim();
-  var saleId = 'QP-'+ref+'-'+Date.now();
+  var total     = getTotal();
+  var ref       = document.getElementById('order-ref').textContent.replace('#','').trim();
+  var payMethod = STATE.payMethod || 'efectivo';
+
+  // Actualizar orden pendiente
   var po = STATE.pendingOrders.find(function(o){return String(o.num).padStart(4,'0')===ref;});
   if(po) po.status='paid';
   renderPendingList();
+
+  // Crear snapshot ANTES de limpiar carrito (2b, 2e)
+  var snapshot = crearSnapshot(STATE.cart, total, ref, payMethod);
+
+  // Validar integridad (2k)
+  var errorVal = validarSnapshot(snapshot);
+  if (errorVal) {
+    showToast('Error en venta: ' + errorVal, 'error');
+    return;
+  }
+
+  // Mostrar pantalla éxito
   document.getElementById('succ-amount').textContent = fmt(total);
   document.getElementById('succ-dte').textContent    = '⏳ Emitiendo DTE al SII…';
   document.getElementById('succ-dte-detail').style.display = 'none';
@@ -1393,35 +1412,75 @@ function confirmCobro(){
   _lastDTE = null;
   STATE.successShowing = true;
   document.getElementById('success-screen').classList.add('open');
-  var itemsSnapshot = STATE.cart.map(function(i){ return Object.assign({},i); });
+
+  // Limpiar carrito DESPUÉS del snapshot (2d)
   clearCart();
   STATE.orderNum++;
   document.getElementById('order-ref').textContent = '#'+String(STATE.orderNum).padStart(4,'0');
   document.getElementById('disc-val').value = '';
 
-  emitirDTE(itemsSnapshot, total, saleId).then(function(dte) {
+  // Guardar en cola IndexedDB ANTES de intentar (2c)
+  encolarVenta(snapshot).then(function() {
+    actualizarBadge();
+
+    // Intentar emitir inmediatamente usando snapshot (2e)
+    var posItems = snapshot.items.map(function(i) {
+      return { description:i.name, quantity:i.qty, unit_price:Math.round(i.price) };
+    });
+
+    return fetch(FACTURACL.url + '/api/pos/emit', {
+      method:  'POST',
+      headers: { 'Content-Type':'application/json', 'X-API-Key':FACTURACL.apiKey },
+      body:    JSON.stringify({
+        document_type: snapshot.tributario.tipoDocumento,
+        items:         posItems,
+        pos_sale_id:   snapshot.id,   // UUID como idempotency key (2a)
+        pos_terminal:  'CAJA-1',
+      }),
+    });
+
+  }).then(function(res) {
+    return res.json();
+
+  }).then(function(dte) {
     _lastDTE = dte;
     STATE.dteNum++;
+
     if (dte.ok && !dte.queued) {
+      // Éxito inmediato — marcar emitida (2f)
+      snapshot.estado     = 'emitida';
+      snapshot.dteEmitido = dte;
+      actualizarVenta(snapshot).then(actualizarBadge);
+
       document.getElementById('succ-dte').textContent = 'N° '+dte.doc_number+' · Enviado al SII ✓';
       if (dte.pdf_base64 || dte.xml_base64) {
         document.getElementById('succ-print-btn').style.display = 'inline-flex';
       }
       showToast('DTE emitido · N° '+dte.doc_number, 'success');
+
     } else if (dte.ok && dte.queued) {
+      // En cola del servidor — dejar pendiente local también (2g)
       document.getElementById('succ-dte').textContent = '⏳ DTE en cola · Se emitirá automáticamente';
-      document.getElementById('succ-dte-detail').textContent = 'Sin conexión con Koywe — reintento en 2 min';
+      document.getElementById('succ-dte-detail').textContent = 'Pago registrado. Documento pendiente de emisión automática.';
       document.getElementById('succ-dte-detail').style.display = 'block';
       showToast('Venta registrada · DTE en cola', 'info');
+
     } else {
-      document.getElementById('succ-dte').textContent = '⚠ Error al emitir DTE';
-      document.getElementById('succ-dte-detail').textContent = dte.message || 'Error desconocido';
+      // Error — dejar en cola para reintento (2g)
+      snapshot.ultimoError = dte.message || 'Error desconocido';
+      actualizarVenta(snapshot);
+      document.getElementById('succ-dte').textContent = '⏳ DTE en cola · Reintentando…';
+      document.getElementById('succ-dte-detail').textContent = 'Pago registrado. Documento pendiente de emisión automática.';
       document.getElementById('succ-dte-detail').style.display = 'block';
-      showToast('Error DTE: '+(dte.message||'Error'), 'error');
+      showToast('Venta registrada · DTE pendiente', 'info');
     }
+
   }).catch(function(err) {
+    // Sin conexión — ya está en cola, el worker reintentará (2g, 3i)
+    snapshot.ultimoError = err.message;
+    actualizarVenta(snapshot);
     document.getElementById('succ-dte').textContent = '⏳ DTE en cola · Sin conexión';
-    document.getElementById('succ-dte-detail').textContent = 'Se reintentará automáticamente';
+    document.getElementById('succ-dte-detail').textContent = 'Pago registrado. Documento pendiente de emisión automática.';
     document.getElementById('succ-dte-detail').style.display = 'block';
     showToast('Venta registrada · DTE pendiente', 'info');
   });
@@ -1814,6 +1873,386 @@ function showToast(msg,type){
   clearTimeout(toastTimer);
   toastTimer=setTimeout(function(){t.classList.remove('show');},2200);
 }
+
+// ════════════════════════════════════════════════════
+// COLA OFFLINE — IndexedDB + Worker de reintentos
+// Pasos: 2a-2m, 3a-3l, 4a-4g del checklist
+// ════════════════════════════════════════════════════
+
+var SCHEMA_VERSION = 1;
+var _db = null;
+var _workerLock = false;
+var BACKOFF_SECONDS = [30, 60, 300, 900, 1800]; // 30s,1m,5m,15m,30m
+var MAX_QUEUE_ATTEMPTS = 5;
+
+// ── Inicializar IndexedDB ─────────────────────────────────────
+function initDB() {
+  return new Promise(function(resolve, reject) {
+    if (_db) { resolve(_db); return; }
+    var req = indexedDB.open('quickpos_queue', 1);
+    req.onupgradeneeded = function(e) {
+      var db = e.target.result;
+      if (!db.objectStoreNames.contains('ventas')) {
+        var store = db.createObjectStore('ventas', { keyPath: 'id' });
+        store.createIndex('estado', 'estado', { unique: false });
+        store.createIndex('created_at', 'created_at', { unique: false });
+      }
+    };
+    req.onsuccess = function(e) { _db = e.target.result; resolve(_db); };
+    req.onerror   = function(e) { reject(e.target.error); };
+  });
+}
+
+// ── Guardar venta en cola ─────────────────────────────────────
+async function encolarVenta(snapshot) {
+  var db = await initDB();
+  return new Promise(function(resolve, reject) {
+    var tx    = db.transaction('ventas', 'readwrite');
+    var store = tx.objectStore('ventas');
+    var req   = store.put(snapshot);
+    req.onsuccess = function() { resolve(snapshot); };
+    req.onerror   = function(e) { reject(e.target.error); };
+  });
+}
+
+// ── Obtener ventas pendientes ─────────────────────────────────
+async function getVentasPendientes() {
+  var db = await initDB();
+  return new Promise(function(resolve, reject) {
+    var tx      = db.transaction('ventas', 'readonly');
+    var store   = tx.objectStore('ventas');
+    var idx     = store.index('estado');
+    var results = [];
+    var req     = idx.openCursor(IDBKeyRange.only('pendiente'));
+    req.onsuccess = function(e) {
+      var cursor = e.target.result;
+      if (cursor) { results.push(cursor.value); cursor.continue(); }
+      else resolve(results);
+    };
+    req.onerror = function(e) { reject(e.target.error); };
+  });
+}
+
+// ── Obtener todas las ventas (para listado) ───────────────────
+async function getTodasVentas() {
+  var db = await initDB();
+  return new Promise(function(resolve, reject) {
+    var tx    = db.transaction('ventas', 'readonly');
+    var store = tx.objectStore('ventas');
+    var req   = store.getAll();
+    req.onsuccess = function(e) { resolve(e.target.result || []); };
+    req.onerror   = function(e) { reject(e.target.error); };
+  });
+}
+
+// ── Actualizar venta en cola ──────────────────────────────────
+async function actualizarVenta(snapshot) {
+  var db = await initDB();
+  return new Promise(function(resolve, reject) {
+    var tx    = db.transaction('ventas', 'readwrite');
+    var store = tx.objectStore('ventas');
+    var req   = store.put(snapshot);
+    req.onsuccess = function() { resolve(); };
+    req.onerror   = function(e) { reject(e.target.error); };
+  });
+}
+
+// ── Eliminar venta de cola ────────────────────────────────────
+async function eliminarVenta(id) {
+  var db = await initDB();
+  return new Promise(function(resolve, reject) {
+    var tx    = db.transaction('ventas', 'readwrite');
+    var store = tx.objectStore('ventas');
+    var req   = store.delete(id);
+    req.onsuccess = function() { resolve(); };
+    req.onerror   = function(e) { reject(e.target.error); };
+  });
+}
+
+// ── Generar UUID simple ───────────────────────────────────────
+function generarUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+// ── Determinar si error es permanente ─────────────────────────
+function esErrorPermanente(err) {
+  var msg = (err.message || '').toLowerCase();
+  if (msg.includes('validation'))     return true;
+  if (msg.includes('rut inválido'))   return true;
+  if (msg.includes('required field')) return true;
+  if (err.status >= 400 && err.status < 500 && err.status !== 429) return true;
+  return false;
+}
+
+// ── Validar integridad del snapshot antes de enviar (2k) ──────
+function validarSnapshot(snap) {
+  if (!snap.items || !snap.items.length)          return 'Sin items en la venta';
+  if (!snap.totales || snap.totales.total <= 0)   return 'Total debe ser mayor a $0';
+  var sumaItems = snap.items.reduce(function(s, i) { return s + (i.price * i.qty); }, 0);
+  if (Math.abs(sumaItems - snap.totales.subtotal) > 10) return 'Las sumas no cuadran';
+  return null; // OK
+}
+
+// ── Crear snapshot completo de la venta (2b, 2h, 2i, 2j) ─────
+function crearSnapshot(items, total, ref, payMethod) {
+  var dv = parseFloat(document.getElementById('disc-val')?.value) || 0;
+  var subtotal = items.reduce(function(s, i) { return s + i.price * i.qty; }, 0);
+  var disc = STATE.discType === 'pct' ? Math.round(subtotal * dv / 100) : Math.min(dv, subtotal);
+  var neto = Math.round((total) / 1.19);
+  var iva  = total - neto;
+
+  return {
+    // Identificación
+    id:            generarUUID(),          // idempotency key (2a)
+    schemaVersion: SCHEMA_VERSION,         // (2h)
+    created_at:    new Date().toISOString(),
+    ref:           ref,
+    // Items completos
+    items:         items.map(function(i) { return Object.assign({}, i); }),
+    // Totales cerrados (2j)
+    totales: {
+      subtotal:  subtotal,
+      descuento: disc,
+      neto:      neto,
+      exento:    0,
+      iva:       iva,
+      total:     total,
+    },
+    // Datos de pago
+    medioPago:     payMethod || STATE.payMethod || 'efectivo',
+    // Datos tributarios (2i)
+    tributario: {
+      tipoDocumento: '37',  // boleta electrónica
+      afecto:        true,
+      emisorRut:     FACTURACL.url,  // referencia
+    },
+    // Estado de cola
+    estado:        'pendiente',
+    reintentos:    0,
+    ultimoError:   null,
+    ultimoIntento: null,
+    nextIntento:   new Date().toISOString(),
+    // Resultado final
+    dteEmitido:    null,
+  };
+}
+
+// ── Worker de reintentos ──────────────────────────────────────
+async function procesarCola() {
+  if (_workerLock) return; // lock de concurrencia (3b)
+  _workerLock = true;
+
+  try {
+    var pendientes = await getVentasPendientes();
+    var ahora = new Date();
+
+    for (var i = 0; i < pendientes.length; i++) {
+      var venta = pendientes[i];
+      // Verificar si ya es hora de reintentar (backoff)
+      if (venta.nextIntento && new Date(venta.nextIntento) > ahora) continue;
+
+      await procesarVenta(venta);
+    }
+
+    // Actualizar badge UI
+    actualizarBadge();
+
+  } catch (err) {
+    console.warn('Error en worker cola:', err.message);
+  } finally {
+    _workerLock = false;
+  }
+}
+
+async function procesarVenta(venta) {
+  // Validar integridad (2k)
+  var errorValidacion = validarSnapshot(venta);
+  if (errorValidacion) {
+    venta.estado      = 'error_permanente';
+    venta.ultimoError = errorValidacion;
+    await actualizarVenta(venta);
+    actualizarBadge();
+    return;
+  }
+
+  // Marcar como enviando (lock por venta) (3d)
+  venta.estado        = 'enviando';
+  venta.ultimoIntento = new Date().toISOString();
+  await actualizarVenta(venta);
+
+  try {
+    var posItems = venta.items.map(function(i) {
+      return { description: i.name, quantity: i.qty, unit_price: Math.round(i.price) };
+    });
+
+    var res = await fetch(FACTURACL.url + '/api/pos/emit', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': FACTURACL.apiKey },
+      body:    JSON.stringify({
+        document_type: '37',
+        items:         posItems,
+        pos_sale_id:   venta.id,        // UUID idempotency key (3e)
+        pos_terminal:  'CAJA-1',
+      }),
+    });
+
+    var dte = await res.json();
+
+    if (dte.ok) {
+      // Éxito — marcar emitida (3f)
+      venta.estado     = 'emitida';
+      venta.dteEmitido = dte;
+      await actualizarVenta(venta);
+      actualizarBadge();
+
+      // Notificar al usuario (4c)
+      showToast('DTE emitido automáticamente · N° ' + (dte.doc_number || '—'), 'success');
+      console.log('Cola: venta emitida', venta.id, dte.doc_number);
+    } else {
+      throw { message: dte.message || 'Error desconocido', status: res.status };
+    }
+
+  } catch (err) {
+    var reintentos = venta.reintentos + 1;
+    var permanente = esErrorPermanente(err);
+    var agotados   = reintentos >= MAX_QUEUE_ATTEMPTS;
+
+    // Calcular próximo intento con backoff (3j)
+    var backoffSeg = BACKOFF_SECONDS[Math.min(reintentos - 1, BACKOFF_SECONDS.length - 1)];
+    var nextIntento = new Date(Date.now() + backoffSeg * 1000).toISOString();
+
+    // Actualizar estado (3g)
+    venta.estado      = (permanente || agotados) ? 'error_permanente' : 'pendiente';
+    venta.reintentos  = reintentos;
+    venta.ultimoError = err.message || String(err);
+    venta.nextIntento = nextIntento;
+    await actualizarVenta(venta);
+    actualizarBadge();
+
+    console.warn('Cola: fallo en venta', venta.id, 'intento', reintentos, err.message);
+  }
+}
+
+// ── Recuperar locks huérfanos al iniciar (3l) ─────────────────
+async function recuperarLocks() {
+  try {
+    var todas = await getTodasVentas();
+    for (var i = 0; i < todas.length; i++) {
+      if (todas[i].estado === 'enviando') {
+        todas[i].estado = 'pendiente';
+        await actualizarVenta(todas[i]);
+      }
+    }
+  } catch (e) { console.warn('Error recuperando locks:', e); }
+}
+
+// ── Badge de ventas pendientes (4a) ───────────────────────────
+async function actualizarBadge() {
+  try {
+    var todas = await getTodasVentas();
+    var pend  = todas.filter(function(v) { return v.estado === 'pendiente' || v.estado === 'enviando'; }).length;
+    var errs  = todas.filter(function(v) { return v.estado === 'error_permanente'; }).length;
+    var badge = document.getElementById('queue-badge');
+    if (!badge) return;
+    if (pend + errs === 0) {
+      badge.style.display = 'none';
+    } else {
+      badge.style.display = 'flex';
+      badge.textContent   = pend + errs;
+      badge.style.background = errs > 0 ? 'var(--red)' : 'var(--amber)';
+    }
+  } catch (e) {}
+}
+
+// ── Pantalla de ventas pendientes (4d) ───────────────────────
+async function mostrarColaVentas() {
+  var todas = await getTodasVentas();
+  todas.sort(function(a, b) { return b.created_at.localeCompare(a.created_at); });
+
+  var html = todas.length === 0
+    ? '<div style="text-align:center;padding:24px;color:var(--text3)">No hay ventas en cola</div>'
+    : todas.map(function(v) {
+        var color = {
+          pendiente:       'var(--amber)',
+          enviando:        'var(--accent)',
+          emitida:         'var(--green)',
+          error_permanente:'var(--red)',
+        }[v.estado] || 'var(--text3)';
+
+        var label = {
+          pendiente:       '⏳ Pendiente',
+          enviando:        '🔄 Enviando…',
+          emitida:         '✅ Emitida',
+          error_permanente:'❌ Error',
+        }[v.estado] || v.estado;
+
+        var fecha = new Date(v.created_at).toLocaleString('es-CL');
+
+        return '<div style="padding:12px;border-bottom:1px solid var(--border)">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">' +
+            '<span style="font-size:12px;font-family:var(--mono);color:var(--text3)">' + v.id.slice(0,8) + '…</span>' +
+            '<span style="font-size:11px;font-weight:600;color:' + color + '">' + label + '</span>' +
+          '</div>' +
+          '<div style="display:flex;justify-content:space-between;align-items:center">' +
+            '<span style="font-size:13px;color:var(--text2)">' + fecha + '</span>' +
+            '<span style="font-size:14px;font-weight:600;font-family:var(--mono)">' + fmt(v.totales?.total || 0) + '</span>' +
+          '</div>' +
+          (v.ultimoError ? '<div style="font-size:11px;color:var(--red);margin-top:4px">⚠ ' + v.ultimoError + '</div>' : '') +
+          (v.estado === 'pendiente' || v.estado === 'error_permanente'
+            ? '<button onclick="reintentarVenta('' + v.id + '')" style="margin-top:6px;padding:4px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:11px;cursor:pointer">↻ Reintentar</button>'
+            : '') +
+        '</div>';
+      }).join('');
+
+  // Abrir modal con la lista
+  if (typeof openModal === 'function') {
+    openModal('Cola de ventas · ' + todas.length + ' registros', html);
+  }
+}
+
+// ── Reintentar venta manualmente ─────────────────────────────
+async function reintentarVenta(id) {
+  var db = await initDB();
+  var venta = await new Promise(function(res, rej) {
+    var tx  = db.transaction('ventas', 'readwrite');
+    var req = tx.objectStore('ventas').get(id);
+    req.onsuccess = function(e) { res(e.target.result); };
+    req.onerror   = function(e) { rej(e.target.error); };
+  });
+  if (!venta) return;
+  venta.estado      = 'pendiente';
+  venta.nextIntento = new Date().toISOString();
+  await actualizarVenta(venta);
+  procesarCola();
+  showToast('Reintentando…', 'info');
+  if (typeof closeModal === 'function') closeModal();
+}
+window.reintentarVenta = reintentarVenta;
+window.mostrarColaVentas = mostrarColaVentas;
+
+// ── Iniciar sistema de cola ───────────────────────────────────
+async function iniciarCola() {
+  await initDB();
+  await recuperarLocks();    // (3l) recuperar locks huérfanos
+  await actualizarBadge();   // (4a) mostrar badge inicial
+  procesarCola();            // procesar pendientes al iniciar
+
+  // Worker cada 30 segundos (3a)
+  setInterval(procesarCola, 30 * 1000);
+
+  // Reintentar inmediatamente al volver online (3i)
+  window.addEventListener('online', function() {
+    showToast('Conexión restaurada · Reintentando DTEs pendientes…', 'info');
+    setTimeout(procesarCola, 1000);
+  });
+}
+
+// ════════════════════════════════════════════════════
+// FIN COLA OFFLINE
+// ════════════════════════════════════════════════════
 </script>
 </body>
 </html>
