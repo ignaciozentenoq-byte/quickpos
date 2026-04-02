@@ -2379,7 +2379,7 @@ async function reactivateTenant(id){
 }
 
 function openDrawer(ctx){
-  STATE.drawerContext={type:ctx};
+  if(ctx) STATE.drawerContext={type:ctx};
   if(ctx==='new-tenant'){
     document.getElementById('dr-title').textContent='Nuevo cliente';
     document.getElementById('dr-body').innerHTML=
