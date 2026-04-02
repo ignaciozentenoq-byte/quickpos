@@ -1764,7 +1764,7 @@ async function renderConciliacion() {
   try {
     var controller = new AbortController();
     var timer = setTimeout(function() { controller.abort(); }, 8000);
-    var res = await fetch(FACTURACL.url + '/history?limit=200', {
+    var res = await fetch(FACTURACL.url + '/api/koywe/history?limit=200', {
       headers: { 'X-API-Key': FACTURACL.apiKey },
       signal: controller.signal,
     });
