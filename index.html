@@ -1261,9 +1261,11 @@ function renderCatalog() {
 
 function seedDemoPending() {
   if(STATE.pendingOrders.length>0)return;
+  var active=PRODUCTS.filter(function(p){return p.status==='active';});
+  if(active.length<3)return;
   STATE.pendingOrders=[
-    {num:20,items:'Hamburguesa x1, Jugo de Mango x1',total:6700,status:'pending',snap:[{...PRODUCTS[0],qty:1},{...PRODUCTS[6],qty:1}]},
-    {num:21,items:'Completo x2, Bebida x2',            total:8800,status:'pending',snap:[{...PRODUCTS[1],qty:2},{...PRODUCTS[8],qty:2}]},
+    {num:20,items:active[0].name+' x1, '+(active[2]?active[2].name:'')+ ' x1',total:active[0].price+(active[2]?active[2].price:0),status:'pending',snap:[Object.assign({},active[0],{qty:1}),Object.assign({},active[2]||active[0],{qty:1})]},
+    {num:21,items:active[1].name+' x2',total:active[1].price*2,status:'pending',snap:[Object.assign({},active[1],{qty:2})]},
   ];
 }
 
@@ -1306,7 +1308,7 @@ function renderProds() {
   for(var i=0;i<prods.length;i++){
     var p=prods[i];
     var inCart=STATE.cart.find(function(x){return x.id===p.id;});
-    html+='<div class="prod-card" id="pc-'+p.id+'" onclick="addToCart('+p.id+')">';
+    html+='<div class="prod-card" id="pc-'+p.id+'" onclick="addToCart(\''+p.id+'\')">';
     if(p.tag)html+='<span class="prod-tag '+(p.tag==='hot'?'tag-hot':'tag-new')+'">'+(p.tag==='hot'?'🔥 Pop':'🆕 Nuevo')+'</span>';
     if(inCart)html+='<div class="prod-qty-badge">'+inCart.qty+'</div>';
     html+='<div class="prod-emoji">'+p.emoji+'</div>';
@@ -1322,9 +1324,9 @@ function renderProds() {
 // POS — CART
 // ════════════════════════════════════════════════════
 function addToCart(id) {
-  var p=PRODUCTS.find(function(x){return x.id===id;});
+  var p=PRODUCTS.find(function(x){return String(x.id)===String(id);});
   if(!p)return;
-  var ex=STATE.cart.find(function(x){return x.id===id;});
+  var ex=STATE.cart.find(function(x){return String(x.id)===String(id);});
   if(ex)ex.qty++;
   else STATE.cart.push({id:p.id,name:p.name,emoji:p.emoji,price:p.price,qty:1});
   var card=document.getElementById('pc-'+id);
@@ -1364,12 +1366,12 @@ function renderCart() {
     html+='<span class="ci-emoji">'+item.emoji+'</span>';
     html+='<div class="ci-name">'+item.name+'</div>';
     html+='<div class="ci-qty-ctrl">';
-    html+='<button class="ci-btn" onclick="event.stopPropagation();changeQty('+item.id+',-1)">−</button>';
+    html+='<button class="ci-btn" onclick="event.stopPropagation();changeQty(\''+item.id+'\',-1)">−</button>';
     html+='<span class="ci-qty">'+item.qty+'</span>';
-    html+='<button class="ci-btn" onclick="event.stopPropagation();changeQty('+item.id+',1)">+</button>';
+    html+='<button class="ci-btn" onclick="event.stopPropagation();changeQty(\''+item.id+'\',1)">+</button>';
     html+='</div>';
     html+='<div class="ci-price">'+fmt(item.price*item.qty)+'</div>';
-    html+='<span class="ci-del" onclick="event.stopPropagation();removeFromCart('+item.id+')">✕</span>';
+    html+='<span class="ci-del" onclick="event.stopPropagation();removeFromCart(\''+item.id+'\')">✕</span>';
     html+='</div>';
   }
   el.innerHTML=html;
@@ -1731,6 +1733,32 @@ function toggleProdFilter(f){
 }
 function sortProdBy(k){if(STATE.prodSortKey===k)STATE.prodSortDir*=-1;else{STATE.prodSortKey=k;STATE.prodSortDir=1;}renderProdTable();}
 
+// Helper: obtener nombre de categoría para un cat id (UUID o string)
+function catLabel(catId) {
+  if (!catId) return '—';
+  // Buscar en categorías de BD
+  for (var i = 0; i < CATEGORIES_DB.length; i++) {
+    if (CATEGORIES_DB[i].id === catId) return CATEGORIES_DB[i].name;
+  }
+  // Fallback a CATS hardcodeados
+  for (var j = 0; j < CATS.length; j++) {
+    if (CATS[j].id === catId) return CATS[j].label;
+  }
+  // Fallback: capitalizar el string
+  return catId.length > 10 ? '—' : catId.charAt(0).toUpperCase() + catId.slice(1);
+}
+
+// Helper: obtener color de categoría
+function catColor(catId) {
+  // Primero buscar en CAT_COLORS por string
+  if (CAT_COLORS[catId]) return CAT_COLORS[catId];
+  // Generar color estable basado en el id
+  var colors = ['#f5a623','#22c97a','#4f8ef7','#9b6ef7','#2dd4bf','#f04f4f','#e879f9','#fb923c'];
+  var hash = 0;
+  for (var i = 0; i < catId.length; i++) hash = ((hash << 5) - hash) + catId.charCodeAt(i);
+  return colors[Math.abs(hash) % colors.length];
+}
+
 function renderProdTable(){
   var list=PRODUCTS.slice();
   if(STATE.prodFilter){var q=STATE.prodFilter.toLowerCase();list=list.filter(function(p){return p.name.toLowerCase().indexOf(q)>-1;});}
@@ -1741,42 +1769,42 @@ function renderProdTable(){
   var html='';
   for(var i=0;i<list.length;i++){
     var p=list[i];
-    var clr=CAT_COLORS[p.cat]||'#888';
+    var clr=catColor(p.cat||'');
     var stk=p.ctrlStock?(p.stock===0?'<span style="color:var(--red)">0</span>':('<span style="color:var(--text2)">'+p.stock+'</span>')):'<span style="color:var(--text3)">—</span>';
     var margin=p.cost>0?Math.round((1-p.cost/p.price)*100):null;
-    html+='<tr onclick="openProdDrawer('+p.id+')">';
+    html+='<tr onclick="openProdDrawer(\''+p.id+'\')">';
     html+='<td><div style="display:flex;align-items:center;gap:10px"><div style="width:36px;height:36px;border-radius:var(--r);background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:18px">'+p.emoji+'</div>';
     html+='<div><div style="font-weight:500">'+p.name+(p.featured?' 🔥':'')+'</div></div></div></td>';
-    html+='<td><span class="cat-pill" style="background:'+clr+'22;color:'+clr+';border-color:'+clr+'44">'+(p.cat.charAt(0).toUpperCase()+p.cat.slice(1))+'</span></td>';
+    html+='<td><span class="cat-pill" style="background:'+clr+'22;color:'+clr+';border-color:'+clr+'44">'+catLabel(p.cat)+'</span></td>';
     html+='<td style="font-family:var(--mono)">'+fmt(p.price)+(margin?'<div style="font-size:10px;color:var(--green)">'+margin+'% margen</div>':'')+'</td>';
     html+='<td>'+stk+'</td>';
     html+='<td><span class="badge '+(p.status==='active'?'badge-green':'badge-amber')+'">'+(p.status==='active'?'Activo':'Inactivo')+'</span></td>';
     html+='<td><div class="tbl-row-acts">';
-    html+='<button class="tra" onclick="event.stopPropagation();openProdDrawer('+p.id+')">✏</button>';
-    html+='<button class="tra" onclick="event.stopPropagation();dupProd('+p.id+')">⧉</button>';
-    html+='<button class="tra tra-danger" onclick="event.stopPropagation();delProd('+p.id+')">🗑</button>';
+    html+='<button class="tra" onclick="event.stopPropagation();openProdDrawer(\''+p.id+'\')">✏</button>';
+    html+='<button class="tra" onclick="event.stopPropagation();dupProd(\''+p.id+'\')">⧉</button>';
+    html+='<button class="tra tra-danger" onclick="event.stopPropagation();delProd(\''+p.id+'\')">🗑</button>';
     html+='</div></td></tr>';
   }
   document.getElementById('prod-tbody').innerHTML=html||'<tr><td colspan="6" style="padding:30px;text-align:center;color:var(--text3)">Sin productos</td></tr>';
 }
 
 function dupProd(id){
-  var p=PRODUCTS.find(function(x){return x.id===id;});
+  var p=PRODUCTS.find(function(x){return String(x.id)===String(id);});
   if(!p)return;
-  var clone=Object.assign({},p,{id:STATE.nextProdId++,name:p.name+' (copia)',featured:false});
+  var clone=Object.assign({},p,{id:generarUUID(),name:p.name+' (copia)',featured:false});
   PRODUCTS.push(clone);
   showToast('Duplicado: '+clone.name,'success');
   renderProdTable();renderProds();
 }
 function delProd(id){
-  var idx=PRODUCTS.findIndex(function(x){return x.id===id;});
+  var idx=PRODUCTS.findIndex(function(x){return String(x.id)===String(id);});
   if(idx>-1)PRODUCTS.splice(idx,1);
   showToast('Producto eliminado','success');
   renderProdTable();renderProds();
 }
 
 function openProdDrawer(id){
-  var p=id?PRODUCTS.find(function(x){return x.id===id;}):null;
+  var p=id?PRODUCTS.find(function(x){return String(x.id)===String(id);}):null;
   STATE.drawerContext={type:'product',id:id};
   document.getElementById('dr-title').textContent=p?'Editar producto':'Nuevo producto';
   document.getElementById('dr-body').innerHTML=
@@ -1790,7 +1818,7 @@ function openProdDrawer(id){
     '</select></div>'+
     '<div class="fg"><label class="fl">Estado</label><select class="fs" id="dp-status"><option value="active"'+((!p||p.status==='active')?' selected':'')+'>Activo</option><option value="inactive"'+(p&&p.status==='inactive'?' selected':'')+'>Inactivo</option></select></div>'+
     '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0"><div style="font-size:13px;font-weight:500">🔥 Destacado en POS</div><button class="tog'+(p&&p.featured?' on':'')+(p&&p.featured?' grn':'')+'" id="dp-feat" onclick="this.classList.toggle(\'on\');this.classList.toggle(\'grn\')"></button></div>'+
-    (id?'<button style="width:100%;padding:9px;border-radius:var(--r2);border:1px solid rgba(240,79,79,.3);background:var(--redbg);color:var(--red);font-size:13px;cursor:pointer;margin-top:8px" onclick="delProd('+id+');closeDrawer()">🗑 Eliminar producto</button>':'');
+    (id?'<button style="width:100%;padding:9px;border-radius:var(--r2);border:1px solid rgba(240,79,79,.3);background:var(--redbg);color:var(--red);font-size:13px;cursor:pointer;margin-top:8px" onclick="delProd(\''+id+'\');closeDrawer()">🗑 Eliminar producto</button>':'');
   openDrawer();
 }
 
@@ -1803,11 +1831,11 @@ function saveDrawer(){
     if(!price){showToast('Precio obligatorio','error');return;}
     var data={name:name,price:price,cost:parseFloat(document.getElementById('dp-cost').value)||0,cat:document.getElementById('dp-cat').value,status:document.getElementById('dp-status').value,featured:document.getElementById('dp-feat').classList.contains('on')};
     if(ctx.id){
-      var p=PRODUCTS.find(function(x){return x.id===ctx.id;});
+      var p=PRODUCTS.find(function(x){return String(x.id)===String(ctx.id);});
       if(p)Object.assign(p,data);
       showToast(name+' actualizado ✓','success');
     } else {
-      PRODUCTS.push(Object.assign({id:STATE.nextProdId++,emoji:'🍔',stock:0,ctrlStock:false,tag:''},data));
+      PRODUCTS.push(Object.assign({id:generarUUID(),emoji:'🍔',stock:0,ctrlStock:false,tag:''},data));
       showToast(name+' creado ✓','success');
     }
     renderProdTable();renderProds();closeDrawer();
