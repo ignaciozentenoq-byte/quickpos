@@ -453,7 +453,8 @@ tr:hover .tbl-row-acts{opacity:1;}
       <button class="forgot-btn" onclick="showToast('Revisa tu correo para recuperar la contraseña','info')">¿Olvidaste tu contraseña?</button>
     </div>
     <button class="btn-login" id="l-btn" onclick="doLogin()">Iniciar sesión</button>
-    <div class="login-demo">Demo: <span style="font-family:var(--mono);color:var(--text2);cursor:pointer" onclick="document.getElementById('l-email').value='admin@buensabor.cl';document.getElementById('l-pass').value='123456'">Click aquí para rellenar</span></div>
+    <div class="login-demo">Demo: <span style="font-family:var(--mono);color:var(--text2);cursor:pointer" onclick="document.getElementById('l-email').value='admin@buensabor.cl';document.getElementById('l-pass').value='123456'">▶ Click para rellenar</span></div>
+  </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════
@@ -838,7 +839,7 @@ www.elbuensabor.cl</textarea></div>
   <div class="success-dte" id="succ-dte">Emitiendo DTE…</div>
   <div id="succ-dte-detail" style="font-size:11px;color:var(--text3);margin-top:4px;display:none"></div>
   <div class="success-actions">
-    <button class="succ-btn" id="succ-print-btn" onclick="downloadDTE()">⬇ Descargar DTE</button>
+    <button class="succ-btn" id="succ-print-btn" onclick="downloadDTE()" style="display:none">⬇ Descargar DTE</button>
     <button class="succ-btn succ-primary" onclick="nextSale()">+ Nueva venta <span style="font-family:var(--mono);font-size:10px;opacity:.6">Enter</span></button>
   </div>
 </div>
@@ -936,14 +937,10 @@ var DEMO_SALES = (function(){
 // ════════════════════════════════════════════════════
 // GLOBAL STATE
 // ════════════════════════════════════════════════════
-// ════════════════════════════════════════════════════
-// FACTURACL CONFIG
-// Cambia esta URL por la de tu instancia de FacturaCL
-// ════════════════════════════════════════════════════
 var FACTURACL = {
-  url:    'https://facturacl-production-4b3b.up.railway.app',
-  apiKey: 'facturacl_pos_2024_clave_secreta',
-  enabled: true,   // false = modo demo sin emitir real
+  url:     'https://facturacl-production-4b3b.up.railway.app',
+  apiKey:  'facturacl_pos_2024_clave_secreta',
+  enabled: true,
 };
 
 var STATE = {
@@ -1349,65 +1346,46 @@ function calcVuelto(){
 }
 function closeVuelto(){document.getElementById('vuelto-modal').classList.remove('open');}
 
-// ════════════════════════════════════════════════════
-// INTEGRACIÓN FACTURACL — Emisión real de DTEs
-// ════════════════════════════════════════════════════
-
-// Guarda el último DTE emitido para poder descargarlo
 var _lastDTE = null;
 
 async function emitirDTE(items, total, saleId) {
   if (!FACTURACL.enabled) {
-    // Modo demo — simula respuesta sin llamar a FacturaCL
-    return {
-      ok: true,
-      doc_number: 'DEMO-' + String(STATE.dteNum).padStart(6,'0'),
-      total: total,
-      sii_status: 'demo',
-      pdf_base64: null,
-    };
+    return { ok:true, queued:false, doc_number:'DEMO-'+String(STATE.dteNum).padStart(6,'0'), total:total };
   }
-
-  // Construir ítems para FacturaCL
   var posItems = items.map(function(i) {
-    return {
-      description: i.name,
-      quantity:    i.qty,
-      unit_price:  Math.round(i.price), // precio bruto con IVA incluido
-    };
+    return { description:i.name, quantity:i.qty, unit_price:Math.round(i.price) };
   });
-
-  var payload = {
-    document_type: '37',       // boleta electrónica
-    items:         posItems,
-    pos_sale_id:   saleId,
-    pos_terminal:  'CAJA-1',
-  };
-
-  var res = await fetch(FACTURACL.url + '/api/pos/emit', {
-    method:  'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-Key':    FACTURACL.apiKey,
-    },
-    body: JSON.stringify(payload),
+  var res = await fetch(FACTURACL.url+'/api/pos/emit', {
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-API-Key':FACTURACL.apiKey},
+    body: JSON.stringify({ document_type:'37', items:posItems, pos_sale_id:saleId, pos_terminal:'CAJA-1' }),
   });
-
   return await res.json();
+}
+
+function downloadDTE() {
+  if (!_lastDTE) return;
+  var b64  = _lastDTE.pdf_base64 || _lastDTE.xml_base64;
+  var ext  = _lastDTE.pdf_base64 ? 'pdf' : 'xml';
+  var mime = _lastDTE.pdf_base64 ? 'application/pdf' : 'application/xml';
+  if (!b64) { showToast('DTE no disponible','error'); return; }
+  try {
+    var bin=atob(b64), arr=new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+    var blob=new Blob([arr],{type:mime}), url=URL.createObjectURL(blob);
+    var a=document.createElement('a'); a.href=url; a.download='DTE-'+(_lastDTE.doc_number||'0')+'.'+ext; a.click();
+    URL.revokeObjectURL(url);
+  } catch(e) { showToast('Error al descargar','error'); }
 }
 
 function confirmCobro(){
   closeVuelto();
   var total = getTotal();
   var ref   = document.getElementById('order-ref').textContent.replace('#','').trim();
-  var saleId = 'QP-' + ref + '-' + Date.now();
-
-  // Actualizar orden pendiente
+  var saleId = 'QP-'+ref+'-'+Date.now();
   var po = STATE.pendingOrders.find(function(o){return String(o.num).padStart(4,'0')===ref;});
   if(po) po.status='paid';
   renderPendingList();
-
-  // Mostrar pantalla de éxito inmediatamente
   document.getElementById('succ-amount').textContent = fmt(total);
   document.getElementById('succ-dte').textContent    = '⏳ Emitiendo DTE al SII…';
   document.getElementById('succ-dte-detail').style.display = 'none';
@@ -1415,66 +1393,38 @@ function confirmCobro(){
   _lastDTE = null;
   STATE.successShowing = true;
   document.getElementById('success-screen').classList.add('open');
-
-  // Limpiar carrito
   var itemsSnapshot = STATE.cart.map(function(i){ return Object.assign({},i); });
   clearCart();
   STATE.orderNum++;
   document.getElementById('order-ref').textContent = '#'+String(STATE.orderNum).padStart(4,'0');
   document.getElementById('disc-val').value = '';
 
-  // Emitir DTE en paralelo (no bloquea la UI)
   emitirDTE(itemsSnapshot, total, saleId).then(function(dte) {
     _lastDTE = dte;
     STATE.dteNum++;
-
     if (dte.ok && !dte.queued) {
-      // Emisión inmediata exitosa
-      document.getElementById('succ-dte').textContent =
-        'N° ' + dte.doc_number + ' · Enviado al SII ✓';
-      if (dte.pdf_base64 || dte.has_pdf) {
+      document.getElementById('succ-dte').textContent = 'N° '+dte.doc_number+' · Enviado al SII ✓';
+      if (dte.pdf_base64 || dte.xml_base64) {
         document.getElementById('succ-print-btn').style.display = 'inline-flex';
       }
-      showToast('DTE emitido · N° ' + dte.doc_number, 'success');
+      showToast('DTE emitido · N° '+dte.doc_number, 'success');
     } else if (dte.ok && dte.queued) {
-      // En cola — venta registrada, DTE se emitirá automáticamente
       document.getElementById('succ-dte').textContent = '⏳ DTE en cola · Se emitirá automáticamente';
-      document.getElementById('succ-dte-detail').textContent = 'Sin conexión con Koywe — reintento automático en 2 min';
+      document.getElementById('succ-dte-detail').textContent = 'Sin conexión con Koywe — reintento en 2 min';
       document.getElementById('succ-dte-detail').style.display = 'block';
       showToast('Venta registrada · DTE en cola', 'info');
     } else {
-      // Error real
       document.getElementById('succ-dte').textContent = '⚠ Error al emitir DTE';
       document.getElementById('succ-dte-detail').textContent = dte.message || 'Error desconocido';
       document.getElementById('succ-dte-detail').style.display = 'block';
-      showToast('Error DTE: ' + (dte.message || 'Error'), 'error');
+      showToast('Error DTE: '+(dte.message||'Error'), 'error');
     }
   }).catch(function(err) {
-    // Sin conexión con FacturaCL — venta igual registrada
     document.getElementById('succ-dte').textContent = '⏳ DTE en cola · Sin conexión';
-    document.getElementById('succ-dte-detail').textContent = 'Se reintentará automáticamente cuando vuelva la conexión';
+    document.getElementById('succ-dte-detail').textContent = 'Se reintentará automáticamente';
     document.getElementById('succ-dte-detail').style.display = 'block';
     showToast('Venta registrada · DTE pendiente', 'info');
   });
-}
-
-function downloadDTE() {
-  if (!_lastDTE) return;
-  var b64  = _lastDTE.pdf_base64;
-  var ext  = 'pdf';
-  var mime = 'application/pdf';
-  if (!b64 && _lastDTE.xml_base64) { b64 = _lastDTE.xml_base64; ext = 'xml'; mime = 'application/xml'; }
-  if (!b64) { showToast('DTE no disponible para descarga', 'error'); return; }
-  try {
-    var bin = atob(b64);
-    var arr = new Uint8Array(bin.length);
-    for (var i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
-    var blob = new Blob([arr],{type:mime});
-    var url  = URL.createObjectURL(blob);
-    var a    = document.createElement('a');
-    a.href = url; a.download = 'DTE-'+(_lastDTE.doc_number||'0')+'.'+ext; a.click();
-    URL.revokeObjectURL(url);
-  } catch(e) { showToast('Error al descargar DTE','error'); }
 }
 function nextSale(){STATE.successShowing=false;document.getElementById('success-screen').classList.remove('open');}
 
@@ -1858,3 +1808,12 @@ function startClock(){
 
 var toastTimer;
 function showToast(msg,type){
+  var t=document.getElementById('toast');
+  t.textContent=msg;
+  t.className='show'+(type?' '+type:'');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(function(){t.classList.remove('show');},2200);
+}
+</script>
+</body>
+</html>
