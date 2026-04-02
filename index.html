@@ -856,10 +856,10 @@ www.elbuensabor.cl</textarea></div>
 <div id="modal-overlay">
   <div id="modal-box">
     <div style="font-size:15px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">
-      ⌨ Atajos de teclado
+      <span id="modal-title">⌨ Atajos de teclado</span>
       <button style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer" onclick="closeModal()">×</button>
     </div>
-    <div id="modal-content"></div>
+    <div id="modal-content" style="max-height:70vh;overflow-y:auto"></div>
   </div>
 </div>
 
@@ -1782,7 +1782,11 @@ function showKbHelp(){
     });
     html+='</div></div>';
   });
-  document.getElementById('modal-content').innerHTML=html;
+  openModal('⌨ Atajos de teclado', html);
+}
+function openModal(titulo, html) {
+  document.getElementById('modal-title').textContent = titulo;
+  document.getElementById('modal-content').innerHTML = html;
   document.getElementById('modal-overlay').classList.add('open');
 }
 function closeModal(){document.getElementById('modal-overlay').classList.remove('open');}
