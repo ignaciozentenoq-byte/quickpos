@@ -3,6 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0f1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="QuickPOS">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/svg+xml" href="/icon-192.svg">
+<link rel="apple-touch-icon" href="/icon-192.svg">
 <title>QuickPOS — Sistema Unificado</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -2571,6 +2578,19 @@ async function iniciarCola() {
 // ════════════════════════════════════════════════════
 // FIN COLA OFFLINE
 // ════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════
+// PWA — Service Worker registration (7a/7b)
+// ════════════════════════════════════════════════════
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('/sw.js').then(function(reg) {
+      console.log('[PWA] Service Worker registrado — scope:', reg.scope);
+    }).catch(function(err) {
+      console.log('[PWA] Error registrando SW:', err.message);
+    });
+  });
+}
 </script>
 </body>
 </html>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="80" fill="#0f1117"/>
+  <rect x="40" y="40" width="432" height="432" rx="64" fill="#161922" stroke="#3b82f6" stroke-width="4"/>
+  <text x="256" y="205" text-anchor="middle" font-family="system-ui,sans-serif" font-size="84" font-weight="700" fill="#3b82f6">Quick</text>
+  <text x="256" y="315" text-anchor="middle" font-family="system-ui,sans-serif" font-size="100" font-weight="800" fill="#ffffff">POS</text>
+  <rect x="146" y="350" width="220" height="8" rx="4" fill="#3b82f6" opacity="0.5"/>
+</svg>
