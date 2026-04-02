@@ -590,8 +590,8 @@ tr:hover .tbl-row-acts{opacity:1;}
             <div class="cart-count" id="cart-count">0 productos</div>
           </div>
           <div class="cart-btns">
-            <button class="icon-btn" onclick="showToast('Nota al pedido','info')">📝</button>
-            <button class="icon-btn" onclick="showToast('Asignar mesa','info')">🪑</button>
+            <button class="icon-btn" id="btn-note" onclick="abrirNotaPedido()">📝</button>
+            <button class="icon-btn" id="btn-mesa" onclick="abrirAsignarMesa()">🪑</button>
             <button class="icon-btn ib-danger" onclick="clearCart()">🗑</button>
           </div>
         </div>
@@ -987,6 +987,8 @@ var STATE = {
   selectedCartIdx: -1,
   pendingOrders: [],
   successShowing: false,
+  orderNote: '',
+  orderTable: null,
   // Products
   prodFilter: '',
   prodFilterActive: false,
@@ -1039,7 +1041,7 @@ function switchMod(m) {
   if (m==='reportes') renderReports();
   if (m==='productos') renderProdTable();
   if (m==='config')   renderCfgSections();
-  if (m==='saas')     renderSaaS();
+  if (m==='saas')     { cargarTenants(); renderSaaS(); }
 }
 
 // ════════════════════════════════════════════════════
@@ -1347,8 +1349,57 @@ function changeQty(id,d){
   if(it.qty<=0)removeFromCart(id);
   else{renderCart();renderProds();}
 }
-function clearCart(){STATE.cart=[];STATE.selectedCartIdx=-1;renderCart();renderProds();}
+function clearCart(){STATE.cart=[];STATE.selectedCartIdx=-1;STATE.orderNote='';STATE.orderTable=null;renderCart();renderProds();}
 function selCartItem(idx){STATE.selectedCartIdx=idx;renderCart();}
+
+// ── Nota al pedido ──────────────────────────────────────────
+function abrirNotaPedido() {
+  openModal('📝 Nota al pedido',
+    '<textarea id="inp-nota" rows="4" style="width:100%;padding:10px;border-radius:var(--r);border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;resize:vertical;font-family:inherit" placeholder="Ej: Sin cebolla, extra queso, alérgico a maní…">'+(STATE.orderNote||'')+'</textarea>'+
+    '<div style="display:flex;gap:8px;margin-top:12px">'+
+    '<button style="flex:1;padding:10px;border-radius:var(--r);border:1px solid var(--border);background:var(--bg3);color:var(--text3);cursor:pointer" onclick="STATE.orderNote=\'\';actualizarIndicadores();closeModal();showToast(\'Nota eliminada\',\'info\')">Borrar nota</button>'+
+    '<button style="flex:1;padding:10px;border-radius:var(--r);border:none;background:var(--accent);color:#fff;cursor:pointer;font-weight:600" onclick="STATE.orderNote=document.getElementById(\'inp-nota\').value.trim();actualizarIndicadores();closeModal();if(STATE.orderNote)showToast(\'Nota guardada\',\'success\')">Guardar</button>'+
+    '</div>'
+  );
+  setTimeout(function(){ var el=document.getElementById('inp-nota'); if(el)el.focus(); },100);
+}
+
+// ── Asignar mesa ────────────────────────────────────────────
+var MESAS_DISPONIBLES = [1,2,3,4,5,6,7,8,9,10,11,12];
+
+function abrirAsignarMesa() {
+  var html='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">';
+  for(var i=0;i<MESAS_DISPONIBLES.length;i++){
+    var m=MESAS_DISPONIBLES[i];
+    var sel=STATE.orderTable===m;
+    html+='<button style="padding:16px 0;border-radius:var(--r);border:2px solid '+(sel?'var(--accent)':'var(--border)')+';background:'+(sel?'var(--accent)':'var(--bg3)')+';color:'+(sel?'#fff':'var(--text)')+';font-size:16px;font-weight:600;cursor:pointer" onclick="selMesa('+m+')">'+m+'</button>';
+  }
+  html+='</div>';
+  if(STATE.orderTable){
+    html+='<button style="width:100%;margin-top:12px;padding:10px;border-radius:var(--r);border:1px solid var(--border);background:var(--bg3);color:var(--text3);cursor:pointer" onclick="selMesa(null)">Quitar mesa</button>';
+  }
+  html+='<div style="margin-top:8px;font-size:11px;color:var(--text3);text-align:center">Selecciona una mesa para el pedido</div>';
+  openModal('🪑 Asignar mesa', html);
+}
+
+function selMesa(num) {
+  STATE.orderTable=num;
+  actualizarIndicadores();
+  closeModal();
+  if(num) showToast('Mesa '+num+' asignada','success');
+  else showToast('Mesa desasignada','info');
+}
+
+// ── Actualizar indicadores visuales de nota/mesa ────────────
+function actualizarIndicadores() {
+  var btnNote=document.getElementById('btn-note');
+  var btnMesa=document.getElementById('btn-mesa');
+  if(btnNote) btnNote.style.background=STATE.orderNote?'var(--accent)':'';
+  if(btnNote) btnNote.style.color=STATE.orderNote?'#fff':'';
+  if(btnMesa) btnMesa.textContent=STATE.orderTable?('🪑'+STATE.orderTable):'🪑';
+  if(btnMesa) btnMesa.style.background=STATE.orderTable?'var(--accent)':'';
+  if(btnMesa) btnMesa.style.color=STATE.orderTable?'#fff':'';
+}
 
 function renderCart() {
   var el=document.getElementById('cart-items');
@@ -1788,19 +1839,78 @@ function renderProdTable(){
   document.getElementById('prod-tbody').innerHTML=html||'<tr><td colspan="6" style="padding:30px;text-align:center;color:var(--text3)">Sin productos</td></tr>';
 }
 
-function dupProd(id){
+async function dupProd(id){
   var p=PRODUCTS.find(function(x){return String(x.id)===String(id);});
   if(!p)return;
-  var clone=Object.assign({},p,{id:generarUUID(),name:p.name+' (copia)',featured:false});
+  var newId=generarUUID();
+  var clone=Object.assign({},p,{id:newId,name:p.name+' (copia)',featured:false});
   PRODUCTS.push(clone);
-  showToast('Duplicado: '+clone.name,'success');
   renderProdTable();renderProds();
+  showToast('Duplicado: '+clone.name,'success');
+  // Persistir en servidor
+  persistirProducto(clone, 'create');
 }
-function delProd(id){
+async function delProd(id){
   var idx=PRODUCTS.findIndex(function(x){return String(x.id)===String(id);});
   if(idx>-1)PRODUCTS.splice(idx,1);
-  showToast('Producto eliminado','success');
   renderProdTable();renderProds();
+  showToast('Producto eliminado','success');
+  // Persistir en servidor (soft delete = status inactive)
+  try {
+    await authFetch(FACTURACL.url+'/api/pos/products/'+id, {
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({status:'inactive'}),
+    });
+  } catch(e){ console.warn('[Productos] Error eliminando en servidor:', e.message); }
+  // Eliminar de IndexedDB
+  try {
+    var db=await initDB();
+    var tx=db.transaction('productos','readwrite');
+    tx.objectStore('productos').delete(id);
+  } catch(e){}
+}
+
+// ── Persistir producto en servidor + IndexedDB ──────────────
+async function persistirProducto(prod, action) {
+  // Guardar en IndexedDB inmediatamente (offline-first)
+  try {
+    var db=await initDB();
+    var tx=db.transaction('productos','readwrite');
+    tx.objectStore('productos').put({
+      id:prod.id, name:prod.name, price:prod.price, cost:prod.cost||0,
+      cat:prod.cat, emoji:prod.emoji||'🍔', tag:prod.tag||'',
+      status:prod.status||'active', featured:prod.featured||false,
+      stock:prod.stock||0, ctrlStock:prod.ctrlStock||false,
+      stock_alert:prod.stock_alert||0, sort_order:prod.sort_order||99,
+      updated_at:new Date().toISOString(),
+    });
+  } catch(e){ console.warn('[Productos] Error guardando en IndexedDB:', e.message); }
+
+  // Sincronizar con servidor
+  try {
+    var payload={
+      name:prod.name, price:prod.price, cost:prod.cost||0,
+      category_id:prod.cat||null, emoji:prod.emoji||'🍔', tag:prod.tag||'',
+      status:prod.status||'active', featured:prod.featured||false,
+      track_stock:prod.ctrlStock||false, stock:prod.stock||0,
+      stock_alert:prod.stock_alert||0, sort_order:prod.sort_order||99,
+      tax_type:'iva', metadata:{},
+    };
+    if(action==='create'){
+      await authFetch(FACTURACL.url+'/api/pos/products', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(payload),
+      });
+    } else {
+      await authFetch(FACTURACL.url+'/api/pos/products/'+prod.id, {
+        method:'PUT',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(payload),
+      });
+    }
+  } catch(e){ console.warn('[Productos] Error sincronizando con servidor:', e.message); }
 }
 
 function openProdDrawer(id){
@@ -1832,19 +1942,37 @@ function saveDrawer(){
     var data={name:name,price:price,cost:parseFloat(document.getElementById('dp-cost').value)||0,cat:document.getElementById('dp-cat').value,status:document.getElementById('dp-status').value,featured:document.getElementById('dp-feat').classList.contains('on')};
     if(ctx.id){
       var p=PRODUCTS.find(function(x){return String(x.id)===String(ctx.id);});
-      if(p)Object.assign(p,data);
+      if(p){
+        Object.assign(p,data);
+        persistirProducto(p, 'update');
+      }
       showToast(name+' actualizado ✓','success');
     } else {
-      PRODUCTS.push(Object.assign({id:generarUUID(),emoji:'🍔',stock:0,ctrlStock:false,tag:''},data));
+      var newProd=Object.assign({id:generarUUID(),emoji:'🍔',stock:0,ctrlStock:false,tag:''},data);
+      PRODUCTS.push(newProd);
+      persistirProducto(newProd, 'create');
       showToast(name+' creado ✓','success');
     }
     renderProdTable();renderProds();closeDrawer();
   } else if(ctx&&ctx.type==='new-tenant'){
     var tname=document.getElementById('dt-name').value.trim();
     if(!tname){showToast('Nombre obligatorio','error');return;}
-    TENANTS.push({id:TENANTS.length+1,name:tname,rut:document.getElementById('dt-rut').value||'—',plan:document.getElementById('dt-plan').value,status:'trial',mrr:0,dte:0,vence:'2025-03-31',color:'#4f8ef7',init:tname.substring(0,2).toUpperCase()});
-    showToast(tname+' creado ✓','success');
+    var tdata={name:tname,rut:document.getElementById('dt-rut').value||'',plan_id:document.getElementById('dt-plan').value||'basic'};
+    // Agregar temporalmente al array local
+    var tempId=generarUUID();
+    TENANTS.push({id:tempId,name:tname,rut:tdata.rut||'—',plan:tdata.plan_id,status:'trial',mrr:0,dte:0,vence:'—',color:'#4f8ef7',init:tname.substring(0,2).toUpperCase()});
     renderSaaS();closeDrawer();
+    showToast(tname+' creado ✓','success');
+    // Persistir en servidor
+    try {
+      var resp=await authFetch(FACTURACL.url+'/api/pos/tenants',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(tdata)});
+      var result=await resp.json();
+      if(result.ok&&result.tenant){
+        var idx=TENANTS.findIndex(function(x){return x.id===tempId;});
+        if(idx>-1)TENANTS[idx].id=result.tenant.id;
+        renderSaaS();
+      }
+    } catch(e){ console.warn('[SaaS] Error creando tenant:', e.message); }
   } else {
     showToast('Guardado ✓','success');closeDrawer();
   }
@@ -2163,10 +2291,35 @@ function setTFilter(f){
   renderSaaS();
 }
 
+// ── Cargar tenants desde servidor ────────────────────────────
+async function cargarTenants() {
+  try {
+    var resp = await authFetch(FACTURACL.url + '/api/pos/tenants');
+    if (!resp.ok) return;
+    var data = await resp.json();
+    if (data.ok && data.tenants) {
+      TENANTS = data.tenants.map(function(t) {
+        var init = t.name.substring(0,2).toUpperCase();
+        var colors = ['#4f8ef7','#9b6ef7','#f5a623','#22c97a','#f04f4f','#2dd4bf','#e879f9','#fb923c'];
+        var hash = 0;
+        for(var i=0;i<t.id.length;i++) hash=((hash<<5)-hash)+t.id.charCodeAt(i);
+        return {
+          id:t.id, name:t.name, rut:t.rut||'—', plan:t.plan_id||'basic',
+          status:t.status||'active', mrr:t.mrr||0, dte:t.dte_count||0,
+          email:t.email||'', phone:t.phone||'',
+          vence:t.updated_at?t.updated_at.substring(0,10):'—',
+          color:colors[Math.abs(hash)%colors.length], init:init,
+        };
+      });
+      renderSaaS();
+    }
+  } catch(e) { console.warn('[SaaS] Error cargando tenants:', e.message); }
+}
+
 function renderSaaS(){
   var active=TENANTS.filter(function(t){return t.status==='active';});
   var mrr=active.reduce(function(a,t){return a+t.mrr;},0);
-  var dte=TENANTS.reduce(function(a,t){return a+t.dte;},0);
+  var dte=TENANTS.reduce(function(a,t){return a+(t.dte||0);},0);
   document.getElementById('s-tenants').textContent=active.length;
   document.getElementById('s-mrr').textContent=fmt(mrr);
   document.getElementById('s-dte').textContent=dte.toLocaleString('es-CL');
@@ -2182,22 +2335,38 @@ function renderSaaS(){
     html+='<tr onclick="showToast(\''+t.name+' · '+t.rut+'\',\'info\')">';
     html+='<td><div style="display:flex;align-items:center;gap:10px"><div class="ten-av" style="background:'+t.color+'22;color:'+t.color+'">'+t.init+'</div>';
     html+='<div><div style="font-weight:500;font-size:13px">'+t.name+'</div><div style="font-size:11px;color:var(--text3);font-family:var(--mono)">'+t.rut+'</div></div></div></td>';
-    html+='<td><span class="plan-badge '+planClasses[t.plan]+'">'+planNames[t.plan]+'</span></td>';
-    html+='<td><span class="badge '+statusBadges[t.status]+'">'+statusLabels[t.status]+'</span></td>';
+    html+='<td><span class="plan-badge '+(planClasses[t.plan]||'plan-basic')+'">'+(planNames[t.plan]||t.plan)+'</span></td>';
+    html+='<td><span class="badge '+(statusBadges[t.status]||'badge-amber')+'">'+(statusLabels[t.status]||t.status)+'</span></td>';
     html+='<td style="font-family:var(--mono);font-size:12px">'+(t.mrr>0?fmt(t.mrr):'—')+'</td>';
-    html+='<td style="font-family:var(--mono);font-size:12px">'+t.dte.toLocaleString('es-CL')+'</td>';
+    html+='<td style="font-family:var(--mono);font-size:12px">'+(t.dte||0).toLocaleString('es-CL')+'</td>';
     html+='<td style="font-family:var(--mono);font-size:11px;color:var(--text3)">'+t.vence+'</td>';
     html+='<td><div class="tbl-row-acts">';
     html+='<button class="tra" onclick="event.stopPropagation();showToast(\'Ir al entorno de '+t.name+'…\',\'info\')">↗</button>';
-    if(t.status!=='suspended'){html+='<button class="tra tra-danger" onclick="event.stopPropagation();suspendTenant('+t.id+')">⛔</button>';}
-    else{html+='<button class="tra" onclick="event.stopPropagation();reactivateTenant('+t.id+')">✅</button>';}
+    if(t.status!=='suspended'){html+='<button class="tra tra-danger" onclick="event.stopPropagation();suspendTenant(\''+t.id+'\')">⛔</button>';}
+    else{html+='<button class="tra" onclick="event.stopPropagation();reactivateTenant(\''+t.id+'\')">✅</button>';}
     html+='</div></td></tr>';
   });
-  document.getElementById('tenant-tbody').innerHTML=html;
+  document.getElementById('tenant-tbody').innerHTML=html||'<tr><td colspan="7" style="padding:30px;text-align:center;color:var(--text3)">Sin clientes</td></tr>';
 }
 
-function suspendTenant(id){var t=TENANTS.find(function(x){return x.id===id;});if(!t)return;t.status='suspended';t.mrr=0;showToast(t.name+' suspendido','error');renderSaaS();}
-function reactivateTenant(id){var t=TENANTS.find(function(x){return x.id===id;});if(!t)return;t.status='active';showToast(t.name+' reactivado','success');renderSaaS();}
+async function suspendTenant(id){
+  var t=TENANTS.find(function(x){return String(x.id)===String(id);});
+  if(!t)return;
+  t.status='suspended'; var prevMrr=t.mrr; t.mrr=0;
+  renderSaaS();
+  showToast(t.name+' suspendido','error');
+  try { await authFetch(FACTURACL.url+'/api/pos/tenants/'+id, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:'suspended',mrr:0}) }); }
+  catch(e){ t.status='active'; t.mrr=prevMrr; renderSaaS(); showToast('Error al suspender','error'); }
+}
+async function reactivateTenant(id){
+  var t=TENANTS.find(function(x){return String(x.id)===String(id);});
+  if(!t)return;
+  t.status='active';
+  renderSaaS();
+  showToast(t.name+' reactivado','success');
+  try { await authFetch(FACTURACL.url+'/api/pos/tenants/'+id, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:'active'}) }); }
+  catch(e){ t.status='suspended'; renderSaaS(); showToast('Error al reactivar','error'); }
+}
 
 function openDrawer(ctx){
   STATE.drawerContext={type:ctx};
@@ -2297,7 +2466,7 @@ document.addEventListener('keydown',function(e){
   if(e.key==='t'||e.key==='T'){selPay('transf');showToast('Pago: Transferencia','');return;}
   if(e.key==='Enter'){e.preventDefault();if(STATE.mode==='vendedor')sendToCaja();else handleAction();return;}
   if(e.key==='x'||e.key==='X'){clearCart();return;}
-  if(e.key==='n'||e.key==='N'){showToast('Agregar nota al pedido','info');return;}
+  if(e.key==='n'||e.key==='N'){abrirNotaPedido();return;}
   if(e.key==='ArrowLeft'||e.key==='ArrowRight'){
     e.preventDefault();
     var cats=CATS.map(function(c){return c.id;});
@@ -2626,6 +2795,9 @@ function crearSnapshot(items, total, ref, payMethod) {
       iva:       iva,
       total:     total,
     },
+    // Datos del pedido
+    nota:          STATE.orderNote || '',
+    mesa:          STATE.orderTable || null,
     // Datos de pago
     medioPago:     payMethod || STATE.payMethod || 'efectivo',
     // Datos tributarios (2i)
