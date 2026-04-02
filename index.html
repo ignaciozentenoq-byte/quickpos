@@ -548,11 +548,6 @@ tr:hover .tbl-row-acts{opacity:1;}
       <div class="nav-sep"></div>
       <button class="nav-item" id="ni-config"    onclick="switchMod('config')">⚙️<span class="nav-tooltip">Configuración</span></button>
       <button class="nav-item" id="ni-saas"      onclick="switchMod('saas')">🏢<span class="nav-tooltip">Panel SaaS</span></button>
-      <div class="nav-sep"></div>
-      <button class="nav-item" id="ni-cola" onclick="mostrarColaVentas()" style="position:relative">
-        📋<span class="nav-tooltip">Cola de ventas</span>
-        <span id="queue-badge" style="display:none;position:absolute;top:2px;right:2px;min-width:16px;height:16px;border-radius:8px;background:var(--amber);color:#fff;font-size:9px;font-weight:700;align-items:center;justify-content:center;padding:0 3px">0</span>
-      </button>
     </div>
 
     <!-- ══ MOD: POS ══════════════════════════════════ -->
@@ -657,8 +652,9 @@ tr:hover .tbl-row-acts{opacity:1;}
         <button class="tb-btn" onclick="window.print()">🖨 Imprimir</button>
         <button class="tb-btn" onclick="showToast('Exportando Excel…','info')">⬇ Exportar</button>
         <button class="tb-btn danger" onclick="showToast('Cerrando turno…','success')">⏹ Cerrar turno</button>
-        <button class="tb-btn" onclick="mostrarColaVentas()">
-          📋 Cola de ventas
+        <button class="tb-btn" onclick="mostrarColaVentas()" style="position:relative;padding-right:20px">
+          📋 Cola
+          <span id="queue-badge" style="display:none;position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;border-radius:9px;background:var(--amber);color:#fff;font-size:10px;font-weight:700;align-items:center;justify-content:center;padding:0 4px">0</span>
         </button>
       </div>
       <div class="rpt-body">
@@ -2252,21 +2248,47 @@ async function iniciarCola() {
   await actualizarBadge();   // (4a) mostrar badge inicial
   procesarCola();            // procesar pendientes al iniciar
 
-  // Worker cada 15 segundos (3a) — más reactivo
-  setInterval(procesarCola, 15 * 1000);
+  // ── Health check activo cada 15s ─────────────────────────
+  // No dependemos del evento 'online' — hacemos ping real a FacturaCL
+  var _eraOffline = false;
 
-  // Reintentar inmediatamente al volver online (3i)
-  window.addEventListener('online', function() {
-    showToast('Conexión restaurada · Reintentando DTEs pendientes…', 'info');
-    // Reintentar varias veces seguidas al reconectar
-    setTimeout(procesarCola, 500);
-    setTimeout(procesarCola, 3000);
-    setTimeout(procesarCola, 8000);
+  async function healthCheck() {
+    try {
+      var res = await fetch(FACTURACL.url + '/health', {
+        method: 'GET',
+        cache:  'no-store',
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        if (_eraOffline) {
+          _eraOffline = false;
+          showToast('Conexión restaurada · Procesando cola…', 'success');
+        }
+        // Si hay pendientes, procesar cola
+        var pendientes = await getVentasPendientes();
+        if (pendientes.length > 0) {
+          procesarCola();
+        }
+      }
+    } catch (e) {
+      if (!_eraOffline) {
+        _eraOffline = true;
+        console.log('Sin conexión con FacturaCL');
+      }
+    }
+  }
+
+  // Health check cada 15 segundos
+  setInterval(healthCheck, 15 * 1000);
+
+  // Al hacer focus en la ventana también revisar
+  window.addEventListener('focus', function() {
+    setTimeout(healthCheck, 300);
   });
 
-  // También revisar al hacer focus en la ventana (usuario vuelve a la app)
-  window.addEventListener('focus', function() {
-    setTimeout(procesarCola, 500);
+  // Evento online del browser como respaldo
+  window.addEventListener('online', function() {
+    setTimeout(healthCheck, 500);
   });
 }
 
