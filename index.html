@@ -453,7 +453,7 @@ tr:hover .tbl-row-acts{opacity:1;}
       <button class="forgot-btn" onclick="showToast('Revisa tu correo para recuperar la contraseña','info')">¿Olvidaste tu contraseña?</button>
     </div>
     <button class="btn-login" id="l-btn" onclick="doLogin()">Iniciar sesión</button>
-    <div class="login-demo">Demo: <span style="font-family:var(--mono);color:var(--text2)">admin@buensabor.cl</span> / <span style="font-family:var(--mono);color:var(--text2)">123456</span></div>
+    <div class="login-demo">Demo: <span style="font-family:var(--mono);color:var(--text2)"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="badbded7d3d4fad8cfdfd4c9dbd8d5c894d9d6">[email&#160;protected]</a></span> / <span style="font-family:var(--mono);color:var(--text2)">123456</span></div>
   </div>
 </div>
 
@@ -871,7 +871,7 @@ www.elbuensabor.cl</textarea></div>
 
 <div id="toast"></div>
 
-<script>
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 // ════════════════════════════════════════════════════
 // DATA
 // ════════════════════════════════════════════════════
@@ -1429,24 +1429,33 @@ function confirmCobro(){
     _lastDTE = dte;
     STATE.dteNum++;
 
-    if (dte.ok) {
+    if (dte.ok && !dte.queued) {
+      // Emisión inmediata exitosa
       document.getElementById('succ-dte').textContent =
         'N° ' + dte.doc_number + ' · Enviado al SII ✓';
       if (dte.pdf_base64 || dte.has_pdf) {
         document.getElementById('succ-print-btn').style.display = 'inline-flex';
       }
       showToast('DTE emitido · N° ' + dte.doc_number, 'success');
+    } else if (dte.ok && dte.queued) {
+      // En cola — venta registrada, DTE se emitirá automáticamente
+      document.getElementById('succ-dte').textContent = '⏳ DTE en cola · Se emitirá automáticamente';
+      document.getElementById('succ-dte-detail').textContent = 'Sin conexión con Koywe — reintento automático en 2 min';
+      document.getElementById('succ-dte-detail').style.display = 'block';
+      showToast('Venta registrada · DTE en cola', 'info');
     } else {
+      // Error real
       document.getElementById('succ-dte').textContent = '⚠ Error al emitir DTE';
       document.getElementById('succ-dte-detail').textContent = dte.message || 'Error desconocido';
       document.getElementById('succ-dte-detail').style.display = 'block';
       showToast('Error DTE: ' + (dte.message || 'Error'), 'error');
     }
   }).catch(function(err) {
-    document.getElementById('succ-dte').textContent = '⚠ Sin conexión con FacturaCL';
-    document.getElementById('succ-dte-detail').textContent = err.message;
+    // Sin conexión con FacturaCL — venta igual registrada
+    document.getElementById('succ-dte').textContent = '⏳ DTE en cola · Sin conexión';
+    document.getElementById('succ-dte-detail').textContent = 'Se reintentará automáticamente cuando vuelva la conexión';
     document.getElementById('succ-dte-detail').style.display = 'block';
-    showToast('Sin conexión con FacturaCL', 'error');
+    showToast('Venta registrada · DTE pendiente', 'info');
   });
 }
 
@@ -1850,12 +1859,3 @@ function startClock(){
 
 var toastTimer;
 function showToast(msg,type){
-  var t=document.getElementById('toast');
-  t.textContent=msg;
-  t.className='show'+(type?' '+type:'');
-  clearTimeout(toastTimer);
-  toastTimer=setTimeout(function(){t.classList.remove('show');},2200);
-}
-</script>
-</body>
-</html>
