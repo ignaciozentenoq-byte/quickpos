@@ -848,6 +848,7 @@ www.elbuensabor.cl</textarea></div>
   <div id="succ-dte-detail" style="font-size:11px;color:var(--text3);margin-top:4px;display:none"></div>
   <div class="success-actions">
     <button class="succ-btn" id="succ-print-btn" onclick="downloadDTE()" style="display:none">⬇ Descargar DTE</button>
+    <button class="succ-btn" id="succ-provisorio-btn" onclick="imprimirProvisorio()" style="display:none">🖨 Imprimir comprobante</button>
     <button class="succ-btn succ-primary" onclick="nextSale()">+ Nueva venta <span style="font-family:var(--mono);font-size:10px;opacity:.6">Enter</span></button>
   </div>
 </div>
@@ -1356,6 +1357,7 @@ function calcVuelto(){
 function closeVuelto(){document.getElementById('vuelto-modal').classList.remove('open');}
 
 var _lastDTE = null;
+var _lastSnapshot = null;
 
 async function emitirDTE(items, total, saleId) {
   if (!FACTURACL.enabled) {
@@ -1387,6 +1389,72 @@ function downloadDTE() {
   } catch(e) { showToast('Error al descargar','error'); }
 }
 
+// ── Comprobante provisorio imprimible (4g/7i) ────────────────
+function imprimirProvisorio() {
+  var s = _lastSnapshot;
+  if (!s) { showToast('No hay venta para imprimir', 'error'); return; }
+
+  var medios = { efectivo: 'Efectivo', debito: 'Débito', credito: 'Crédito', transferencia: 'Transferencia' };
+  var fecha = new Date(s.created_at).toLocaleString('es-CL');
+  var folio = s.ref || s.id.slice(0, 8);
+
+  var lineas = s.items.map(function(it) {
+    return '<tr>' +
+      '<td style="text-align:left">' + it.qty + 'x ' + it.name + '</td>' +
+      '<td style="text-align:right">$' + Math.round(it.price * it.qty).toLocaleString('es-CL') + '</td>' +
+    '</tr>';
+  }).join('');
+
+  var html = '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<title>Comprobante ' + folio + '</title>' +
+    '<style>' +
+      '@page { margin: 2mm; size: 80mm auto; }' +
+      '* { margin:0; padding:0; box-sizing:border-box; }' +
+      'body { font-family: "Courier New", monospace; font-size: 12px; width: 76mm; padding: 2mm; color: #000; }' +
+      '.center { text-align: center; }' +
+      '.bold { font-weight: bold; }' +
+      '.sep { border-top: 1px dashed #000; margin: 4px 0; }' +
+      '.prov { font-size: 14px; font-weight: bold; border: 2px solid #000; padding: 4px; margin: 6px 0; text-align: center; }' +
+      'table { width: 100%; border-collapse: collapse; }' +
+      'td { padding: 1px 0; vertical-align: top; }' +
+      '.right { text-align: right; }' +
+      '.total-row td { font-weight: bold; font-size: 14px; padding-top: 4px; }' +
+    '</style>' +
+  '</head><body>' +
+    '<div class="center bold" style="font-size:14px">' + (STATE.tenant?.name || 'QuickPOS') + '</div>' +
+    '<div class="center" style="font-size:10px;margin-top:2px">' + fecha + '</div>' +
+    '<div class="prov">COMPROBANTE PROVISORIO</div>' +
+    '<div class="center" style="font-size:10px;margin-bottom:4px">NO VÁLIDO COMO BOLETA · DOCUMENTO INTERNO</div>' +
+    '<div class="sep"></div>' +
+    '<div style="display:flex;justify-content:space-between;margin:3px 0">' +
+      '<span>Folio interno:</span><span class="bold">' + folio + '</span>' +
+    '</div>' +
+    '<div style="display:flex;justify-content:space-between;margin:3px 0">' +
+      '<span>Medio de pago:</span><span>' + (medios[s.medioPago] || s.medioPago) + '</span>' +
+    '</div>' +
+    '<div class="sep"></div>' +
+    '<table>' + lineas + '</table>' +
+    '<div class="sep"></div>' +
+    '<table>' +
+      (s.totales.descuento > 0 ? '<tr><td>Subtotal</td><td class="right">$' + s.totales.subtotal.toLocaleString('es-CL') + '</td></tr>' +
+        '<tr><td>Descuento</td><td class="right">-$' + s.totales.descuento.toLocaleString('es-CL') + '</td></tr>' : '') +
+      '<tr><td>Neto</td><td class="right">$' + s.totales.neto.toLocaleString('es-CL') + '</td></tr>' +
+      '<tr><td>IVA 19%</td><td class="right">$' + s.totales.iva.toLocaleString('es-CL') + '</td></tr>' +
+      '<tr class="total-row"><td>TOTAL</td><td class="right">$' + s.totales.total.toLocaleString('es-CL') + '</td></tr>' +
+    '</table>' +
+    '<div class="sep"></div>' +
+    '<div class="center" style="font-size:10px;margin-top:4px">DTE pendiente de emisión automática</div>' +
+    '<div class="center" style="font-size:9px;color:#666;margin-top:2px">Ref: ' + s.id.slice(0, 13) + '</div>' +
+    '<div class="center" style="font-size:10px;margin-top:6px">— Gracias por su compra —</div>' +
+  '</body></html>';
+
+  var win = window.open('', '_blank', 'width=320,height=600');
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(function() { win.print(); }, 300);
+}
+
 function confirmCobro(){
   closeVuelto();
   var total     = getTotal();
@@ -1412,8 +1480,10 @@ function confirmCobro(){
   document.getElementById('succ-amount').textContent = fmt(total);
   document.getElementById('succ-dte').textContent    = '⏳ Emitiendo DTE al SII…';
   document.getElementById('succ-dte-detail').style.display = 'none';
-  document.getElementById('succ-print-btn').style.display  = 'none';
+  document.getElementById('succ-print-btn').style.display       = 'none';
+  document.getElementById('succ-provisorio-btn').style.display  = 'none';
   _lastDTE = null;
+  _lastSnapshot = snapshot;
   STATE.successShowing = true;
   document.getElementById('success-screen').classList.add('open');
 
@@ -1467,6 +1537,7 @@ function confirmCobro(){
       document.getElementById('succ-dte').textContent = '⏳ DTE en cola · Se emitirá automáticamente';
       document.getElementById('succ-dte-detail').textContent = 'Pago registrado. Documento pendiente de emisión automática.';
       document.getElementById('succ-dte-detail').style.display = 'block';
+      document.getElementById('succ-provisorio-btn').style.display = 'inline-flex';
       showToast('Venta registrada · DTE en cola', 'info');
 
     } else {
@@ -1476,6 +1547,7 @@ function confirmCobro(){
       document.getElementById('succ-dte').textContent = '⏳ DTE en cola · Reintentando…';
       document.getElementById('succ-dte-detail').textContent = 'Pago registrado. Documento pendiente de emisión automática.';
       document.getElementById('succ-dte-detail').style.display = 'block';
+      document.getElementById('succ-provisorio-btn').style.display = 'inline-flex';
       showToast('Venta registrada · DTE pendiente', 'info');
     }
 
@@ -1486,6 +1558,7 @@ function confirmCobro(){
     document.getElementById('succ-dte').textContent = '⏳ DTE en cola · Sin conexión';
     document.getElementById('succ-dte-detail').textContent = 'Pago registrado. Documento pendiente de emisión automática.';
     document.getElementById('succ-dte-detail').style.display = 'block';
+    document.getElementById('succ-provisorio-btn').style.display = 'inline-flex';
     showToast('Venta registrada · DTE pendiente', 'info');
   });
 }
