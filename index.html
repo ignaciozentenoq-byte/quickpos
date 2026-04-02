@@ -453,8 +453,7 @@ tr:hover .tbl-row-acts{opacity:1;}
       <button class="forgot-btn" onclick="showToast('Revisa tu correo para recuperar la contraseña','info')">¿Olvidaste tu contraseña?</button>
     </div>
     <button class="btn-login" id="l-btn" onclick="doLogin()">Iniciar sesión</button>
-    <div class="login-demo">Demo: <span style="font-family:var(--mono);color:var(--text2)">admin@buensabor.cl</span> / <span style="font-family:var(--mono);color:var(--text2)">123456</span></div>
-  </div>
+    <div class="login-demo">Demo: <span style="font-family:var(--mono);color:var(--text2);cursor:pointer" onclick="document.getElementById('l-email').value='admin@buensabor.cl';document.getElementById('l-pass').value='123456'">Click aquí para rellenar</span></div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════
