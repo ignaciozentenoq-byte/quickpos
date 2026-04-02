@@ -2202,7 +2202,7 @@ async function mostrarColaVentas() {
           '</div>' +
           (v.ultimoError ? '<div style="font-size:11px;color:var(--red);margin-top:4px">⚠ ' + v.ultimoError + '</div>' : '') +
           (v.estado === 'pendiente' || v.estado === 'error_permanente'
-            ? '<button onclick="reintentarVenta('' + v.id + '')" style="margin-top:6px;padding:4px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:11px;cursor:pointer">↻ Reintentar</button>'
+            ? '<button data-id="' + v.id + '" class="btn-reintentar" style="margin-top:6px;padding:4px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:11px;cursor:pointer">↻ Reintentar</button>'
             : '') +
         '</div>';
       }).join('');
@@ -2231,6 +2231,14 @@ async function reintentarVenta(id) {
   if (typeof closeModal === 'function') closeModal();
 }
 window.reintentarVenta = reintentarVenta;
+
+// Event delegation para botones reintentar en la lista de cola
+document.addEventListener('click', function(e) {
+  if (e.target && e.target.classList.contains('btn-reintentar')) {
+    var id = e.target.getAttribute('data-id');
+    if (id) reintentarVenta(id);
+  }
+});
 window.mostrarColaVentas = mostrarColaVentas;
 
 // ── Iniciar sistema de cola ───────────────────────────────────
