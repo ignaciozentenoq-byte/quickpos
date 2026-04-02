@@ -346,6 +346,14 @@ tr:hover .tbl-row-acts{opacity:1;}
 ════════════════════════════════════════════════════ */
 #mod-reportes{display:none;flex:1;overflow:hidden;flex-direction:column;}
 #mod-reportes.active{display:flex;}
+#mod-mesas{display:none;flex:1;overflow:hidden;flex-direction:column;}
+#mod-mesas.active{display:flex;}
+.mesa-card{background:var(--bg2);border:2px solid var(--border);border-radius:var(--r2);padding:20px;text-align:center;cursor:pointer;transition:all .2s;}
+.mesa-card:hover{border-color:var(--accent);transform:translateY(-2px);}
+.mesa-card.occupied{border-color:var(--amber);background:rgba(245,166,35,.08);}
+.mesa-card .mesa-num{font-size:24px;font-weight:800;margin-bottom:4px;}
+.mesa-card .mesa-status{font-size:11px;font-weight:500;}
+.mesa-card .mesa-info{font-size:11px;color:var(--text3);margin-top:6px;}
 .rpt-body{flex:1;overflow-y:auto;padding:24px;scrollbar-width:thin;scrollbar-color:var(--bg4) transparent;}
 .metrics-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;}
 .metric-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:16px 18px;position:relative;overflow:hidden;}
@@ -552,6 +560,7 @@ tr:hover .tbl-row-acts{opacity:1;}
       <button class="nav-item active" id="ni-pos" onclick="switchMod('pos')" title="POS">🛒<span class="nav-tooltip">Punto de venta</span></button>
       <button class="nav-item" id="ni-productos" onclick="switchMod('productos')">📦<span class="nav-tooltip">Productos</span></button>
       <button class="nav-item" id="ni-reportes"  onclick="switchMod('reportes')">📊<span class="nav-tooltip">Reportes</span></button>
+      <button class="nav-item" id="ni-mesas"     onclick="switchMod('mesas')">🪑<span class="nav-tooltip">Mesas</span></button>
       <div class="nav-sep"></div>
       <button class="nav-item" id="ni-config"    onclick="switchMod('config')">⚙️<span class="nav-tooltip">Configuración</span></button>
       <button class="nav-item" id="ni-saas"      onclick="switchMod('saas')">🏢<span class="nav-tooltip">Panel SaaS</span></button>
@@ -698,6 +707,24 @@ tr:hover .tbl-row-acts{opacity:1;}
           <div id="conciliacion-table" style="max-height:300px;overflow-y:auto">
             <div style="text-align:center;color:var(--text3);padding:16px;font-size:12px">Cargando conciliación…</div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ MOD: MESAS ════════════════════════════════ -->
+    <div id="mod-mesas">
+      <div style="padding:24px;overflow-y:auto;flex:1">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+          <h2 style="font-size:18px;font-weight:700;margin:0">Mapa de mesas</h2>
+          <div style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text3)">
+            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--green)"></span> Disponible
+            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--amber)" style="margin-left:12px"></span> Ocupada
+          </div>
+        </div>
+        <div id="mesas-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;max-width:700px"></div>
+        <div id="mesa-detalle" style="margin-top:24px;padding:16px;border-radius:var(--r2);background:var(--bg3);border:1px solid var(--border);display:none">
+          <h3 id="mesa-det-title" style="font-size:15px;font-weight:600;margin:0 0 12px 0"></h3>
+          <div id="mesa-det-body" style="font-size:13px;color:var(--text2)"></div>
         </div>
       </div>
     </div>
@@ -907,21 +934,21 @@ var CAT_COLORS = {comida:'#f5a623',jugos:'#22c97a',bebidas:'#4f8ef7',cafe:'#9b6e
 var CATEGORIES_DB = []; // se llena desde IndexedDB/Supabase
 var REAL_SALES = [];    // se llena desde Supabase GET /api/pos/sales
 var PRODUCTS = [
-  {id:1,name:'Hamburguesa Clasica',price:4500,cost:1800,cat:'comida',emoji:'🍔',tag:'hot',status:'active',featured:true,stock:42,ctrlStock:true},
-  {id:2,name:'Completo Italiano',  price:3200,cost:1100,cat:'comida',emoji:'🌭',tag:'',   status:'active',featured:false,stock:28,ctrlStock:true},
-  {id:3,name:'Papas Fritas',       price:2200,cost:600, cat:'comida',emoji:'🍟',tag:'',   status:'active',featured:false,stock:0, ctrlStock:true},
-  {id:4,name:'Hot Dog',            price:2800,cost:900, cat:'comida',emoji:'🌭',tag:'',   status:'active',featured:false,stock:15,ctrlStock:true},
-  {id:5,name:'Empanada de Queso',  price:1800,cost:500, cat:'comida',emoji:'🥟',tag:'new',status:'active',featured:true, stock:20,ctrlStock:true},
-  {id:6,name:'Jugo de Naranja',    price:2000,cost:600, cat:'jugos', emoji:'🍊',tag:'',   status:'active',featured:false,stock:30,ctrlStock:true},
-  {id:7,name:'Jugo de Mango',      price:2200,cost:700, cat:'jugos', emoji:'🥭',tag:'hot',status:'active',featured:true, stock:22,ctrlStock:true},
-  {id:8,name:'Jugo Natural Mix',   price:2500,cost:800, cat:'jugos', emoji:'🍹',tag:'new',status:'active',featured:true, stock:18,ctrlStock:true},
-  {id:9,name:'Bebida 350ml',       price:1200,cost:500, cat:'bebidas',emoji:'🥤',tag:'',  status:'active',featured:false,stock:60,ctrlStock:true},
-  {id:10,name:'Agua Mineral',      price:900, cost:350, cat:'bebidas',emoji:'💧',tag:'',  status:'active',featured:false,stock:45,ctrlStock:true},
-  {id:11,name:'Cafe Espresso',     price:1800,cost:300, cat:'cafe',  emoji:'☕',tag:'',   status:'active',featured:false,stock:999,ctrlStock:false},
-  {id:12,name:'Cafe con Leche',    price:2200,cost:400, cat:'cafe',  emoji:'☕',tag:'hot',status:'active',featured:true, stock:999,ctrlStock:false},
-  {id:13,name:'Te Verde',          price:1400,cost:200, cat:'te',    emoji:'🍵',tag:'',   status:'active',featured:false,stock:80,ctrlStock:true},
-  {id:14,name:'Brownie Chocolate', price:1900,cost:700, cat:'postres',emoji:'🍫',tag:'hot',status:'active',featured:true,stock:12,ctrlStock:true},
-  {id:15,name:'Muffin',            price:1600,cost:550, cat:'postres',emoji:'🧁',tag:'',  status:'active',featured:false,stock:8, ctrlStock:true},
+  {id:'ede9d723-1f51-41a6-856f-43dcb6c18e2b',name:'Hamburguesa Clasica',price:4500,cost:1800,cat:'68576439-b9ba-4686-9a0e-1c0fb53d2823',emoji:'🍔',tag:'hot',status:'active',featured:true,stock:42,ctrlStock:true},
+  {id:'da929ee0-a2a1-417e-9b4f-10b5be999238',name:'Completo Italiano',  price:3200,cost:1100,cat:'68576439-b9ba-4686-9a0e-1c0fb53d2823',emoji:'🌭',tag:'',   status:'active',featured:false,stock:28,ctrlStock:true},
+  {id:'c0043b86-a677-462b-8227-d07ce9622e00',name:'Papas Fritas',       price:2200,cost:600, cat:'68576439-b9ba-4686-9a0e-1c0fb53d2823',emoji:'🍟',tag:'',   status:'active',featured:false,stock:0, ctrlStock:true},
+  {id:'65b13ad2-3875-41b8-9d04-47a015a02ee8',name:'Hot Dog',            price:2800,cost:900, cat:'68576439-b9ba-4686-9a0e-1c0fb53d2823',emoji:'🌭',tag:'',   status:'active',featured:false,stock:15,ctrlStock:true},
+  {id:'746ed8f4-ba8b-40ba-a36a-931cb946274f',name:'Empanada de Queso',  price:1800,cost:500, cat:'68576439-b9ba-4686-9a0e-1c0fb53d2823',emoji:'🥟',tag:'new',status:'active',featured:true, stock:20,ctrlStock:true},
+  {id:'f67e8dc1-eda3-4e2e-bf38-744ec7418dbe',name:'Jugo de Naranja',    price:2000,cost:600, cat:'639497c8-777f-4f2c-ad45-00a057752e1d',emoji:'🍊',tag:'',   status:'active',featured:false,stock:30,ctrlStock:true},
+  {id:'68e101da-12f9-40e4-8061-57fc258f2402',name:'Jugo de Mango',      price:2200,cost:700, cat:'639497c8-777f-4f2c-ad45-00a057752e1d',emoji:'🥭',tag:'hot',status:'active',featured:true, stock:22,ctrlStock:true},
+  {id:'b0b8e4bb-8270-499d-868b-0a065e605fee',name:'Jugo Natural Mix',   price:2500,cost:800, cat:'639497c8-777f-4f2c-ad45-00a057752e1d',emoji:'🍹',tag:'new',status:'active',featured:true, stock:18,ctrlStock:true},
+  {id:'9d67dc19-7955-4163-adfc-d45beecda0dd',name:'Bebida 350ml',       price:1200,cost:500, cat:'ee3b81b1-a4b5-4ec4-b784-6ce7064f3e62',emoji:'🥤',tag:'',  status:'active',featured:false,stock:60,ctrlStock:true},
+  {id:'95eb87ba-e5dc-4775-82c5-8eb15e6248ae',name:'Agua Mineral',       price:900, cost:350, cat:'ee3b81b1-a4b5-4ec4-b784-6ce7064f3e62',emoji:'💧',tag:'',  status:'active',featured:false,stock:45,ctrlStock:true},
+  {id:'c688032d-322a-4e04-a68d-da546d2e9a3a',name:'Cafe Espresso',      price:1800,cost:300, cat:'8ee04bb7-4934-4a25-b787-04c5e8eb67ef',emoji:'☕',tag:'',   status:'active',featured:false,stock:999,ctrlStock:false},
+  {id:'4fe4e01b-0461-48e7-8e5d-fdc11a0f7e71',name:'Cafe con Leche',     price:2200,cost:400, cat:'8ee04bb7-4934-4a25-b787-04c5e8eb67ef',emoji:'☕',tag:'hot',status:'active',featured:true, stock:999,ctrlStock:false},
+  {id:'2eb87b6d-88a9-427b-b3c3-d6c465d634f2',name:'Te Verde',           price:1400,cost:200, cat:'4ee9db44-84ac-471b-9980-2bab0a24e047',emoji:'🍵',tag:'',   status:'active',featured:false,stock:80,ctrlStock:true},
+  {id:'4536efcd-5b87-4e2d-a323-ebe4eb8d6491',name:'Brownie Chocolate',  price:1900,cost:700, cat:'40c135cf-6090-4353-8a9d-fc8ff8d2cdb8',emoji:'🍫',tag:'hot',status:'active',featured:true,stock:12,ctrlStock:true},
+  {id:'9004f821-6cb3-4525-b6e5-a5a48d83dc4a',name:'Muffin',             price:1600,cost:550, cat:'40c135cf-6090-4353-8a9d-fc8ff8d2cdb8',emoji:'🧁',tag:'',  status:'active',featured:false,stock:8, ctrlStock:true},
 ];
 var USERS_CFG = [
   {name:'Pedro Alvarez',  email:'admin@buensabor.cl',  role:'Supervisor',initials:'PA',color:'#9b6ef7',active:true},
@@ -1038,9 +1065,10 @@ function switchMod(m) {
   var navEl = document.getElementById('ni-'+m);
   if (modEl) modEl.classList.add('active');
   if (navEl) navEl.classList.add('active');
-  document.getElementById('active-mod-label').textContent = {pos:'POS',productos:'Productos',reportes:'Reportes',config:'Configuración',saas:'Panel SaaS'}[m]||m;
+  document.getElementById('active-mod-label').textContent = {pos:'POS',productos:'Productos',reportes:'Reportes',mesas:'Mesas',config:'Configuración',saas:'Panel SaaS'}[m]||m;
   if (m==='reportes') { cargarVentasReales(); renderReports(); }
   if (m==='productos') renderProdTable();
+  if (m==='mesas')    renderMesas();
   if (m==='config')   renderCfgSections();
   if (m==='saas')     { cargarTenants(); renderSaaS(); }
 }
@@ -1360,7 +1388,7 @@ function changeQty(id,d){
   if(it.qty<=0)removeFromCart(id);
   else{renderCart();renderProds();}
 }
-function clearCart(){STATE.cart=[];STATE.selectedCartIdx=-1;STATE.orderNote='';STATE.orderTable=null;renderCart();renderProds();}
+function clearCart(){if(STATE.orderTable&&MESAS_STATE[STATE.orderTable])delete MESAS_STATE[STATE.orderTable];STATE.cart=[];STATE.selectedCartIdx=-1;STATE.orderNote='';STATE.orderTable=null;actualizarIndicadores();renderCart();renderProds();}
 function selCartItem(idx){STATE.selectedCartIdx=idx;renderCart();}
 
 // ── Nota al pedido ──────────────────────────────────────────
@@ -1375,15 +1403,17 @@ function abrirNotaPedido() {
   setTimeout(function(){ var el=document.getElementById('inp-nota'); if(el)el.focus(); },100);
 }
 
-// ── Asignar mesa ────────────────────────────────────────────
+// ── Mesas — estado global ──────────────────────────────────
 var MESAS_DISPONIBLES = [1,2,3,4,5,6,7,8,9,10,11,12];
+var MESAS_STATE = {}; // {1: {note:'...', order:'#0023', time:'14:30', items:3, total:12500}, ...}
 
 function abrirAsignarMesa() {
   var html='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">';
   for(var i=0;i<MESAS_DISPONIBLES.length;i++){
     var m=MESAS_DISPONIBLES[i];
     var sel=STATE.orderTable===m;
-    html+='<button style="padding:16px 0;border-radius:var(--r);border:2px solid '+(sel?'var(--accent)':'var(--border)')+';background:'+(sel?'var(--accent)':'var(--bg3)')+';color:'+(sel?'#fff':'var(--text)')+';font-size:16px;font-weight:600;cursor:pointer" onclick="selMesa('+m+')">'+m+'</button>';
+    var occ=MESAS_STATE[m]&&!sel;
+    html+='<button style="padding:16px 0;border-radius:var(--r);border:2px solid '+(sel?'var(--accent)':occ?'var(--amber)':'var(--border)')+';background:'+(sel?'var(--accent)':occ?'rgba(245,166,35,.12)':'var(--bg3)')+';color:'+(sel?'#fff':occ?'var(--amber)':'var(--text)')+';font-size:16px;font-weight:600;cursor:pointer'+(occ?';opacity:.6':'')+'" onclick="'+(occ?'showToast(\'Mesa '+m+' ocupada\',\'error\')':'selMesa('+m+')')+'">'+(occ?'🔒 ':'')+m+'</button>';
   }
   html+='</div>';
   if(STATE.orderTable){
@@ -1394,11 +1424,61 @@ function abrirAsignarMesa() {
 }
 
 function selMesa(num) {
+  // Liberar mesa anterior si había una
+  if(STATE.orderTable && MESAS_STATE[STATE.orderTable]) delete MESAS_STATE[STATE.orderTable];
   STATE.orderTable=num;
+  // Ocupar nueva mesa
+  if(num){
+    var ref=document.getElementById('order-ref')?.textContent||'';
+    MESAS_STATE[num]={note:STATE.orderNote||'',order:ref,time:new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}),items:STATE.cart.length,total:getTotal()};
+  }
   actualizarIndicadores();
   closeModal();
   if(num) showToast('Mesa '+num+' asignada','success');
   else showToast('Mesa desasignada','info');
+}
+
+// ── Render mapa de mesas ────────────────────────────────────
+function renderMesas(){
+  var grid=document.getElementById('mesas-grid');
+  if(!grid) return;
+  var html='';
+  MESAS_DISPONIBLES.forEach(function(m){
+    var occ=MESAS_STATE[m];
+    html+='<div class="mesa-card'+(occ?' occupied':'')+'" onclick="verDetalleMesa('+m+')">';
+    html+='<div class="mesa-num"'+(occ?' style="color:var(--amber)"':'')+'>'+m+'</div>';
+    html+='<div class="mesa-status" style="color:'+(occ?'var(--amber)':'var(--green)')+'">'+(occ?'Ocupada':'Disponible')+'</div>';
+    if(occ){
+      html+='<div class="mesa-info">'+occ.order+' · '+occ.time+'</div>';
+      if(occ.note) html+='<div class="mesa-info" style="font-style:italic">'+occ.note+'</div>';
+    }
+    html+='</div>';
+  });
+  grid.innerHTML=html;
+  document.getElementById('mesa-detalle').style.display='none';
+}
+
+function verDetalleMesa(num){
+  var det=document.getElementById('mesa-detalle');
+  var title=document.getElementById('mesa-det-title');
+  var body=document.getElementById('mesa-det-body');
+  var occ=MESAS_STATE[num];
+  if(!occ){
+    title.textContent='Mesa '+num+' — Disponible';
+    body.innerHTML='<div style="color:var(--green);font-size:14px;margin:8px 0">Esta mesa está disponible.</div>'+
+      '<button class="tb-btn primary" onclick="switchMod(\'pos\');abrirAsignarMesa()">Asignar a pedido actual</button>';
+  } else {
+    title.textContent='Mesa '+num+' — '+occ.order;
+    body.innerHTML=
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">'+
+      '<div><span style="color:var(--text3)">Hora:</span> '+occ.time+'</div>'+
+      '<div><span style="color:var(--text3)">Items:</span> '+(occ.items||0)+'</div>'+
+      '<div><span style="color:var(--text3)">Total:</span> '+fmt(occ.total||0)+'</div>'+
+      '</div>'+
+      (occ.note?'<div style="padding:8px 12px;background:var(--bg4);border-radius:var(--r);margin-bottom:12px;font-style:italic">📝 '+occ.note+'</div>':'')+
+      '<button class="tb-btn" style="color:var(--red);border-color:rgba(240,79,79,.3)" onclick="delete MESAS_STATE['+num+'];renderMesas();showToast(\'Mesa '+num+' liberada\',\'success\')">Liberar mesa</button>';
+  }
+  det.style.display='block';
 }
 
 // ── Actualizar indicadores visuales de nota/mesa ────────────
@@ -1912,17 +1992,32 @@ async function persistirProducto(prod, action) {
       tax_type:'iva', metadata:{},
     };
     if(action==='create'){
-      await authFetch(FACTURACL.url+'/api/pos/products', {
+      var cResp=await authFetch(FACTURACL.url+'/api/pos/products', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify(payload),
       });
+      var cData=await cResp.json();
+      if(cData.ok&&cData.product&&cData.product.id){
+        // Actualizar ID local con el ID real de Supabase
+        var oldId=prod.id;
+        prod.id=cData.product.id;
+        // Actualizar IndexedDB con nuevo ID
+        var db2=await initDB();
+        var tx2=db2.transaction('productos','readwrite');
+        tx2.objectStore('productos').delete(oldId);
+        tx2.objectStore('productos').put(Object.assign({},prod,{updated_at:new Date().toISOString()}));
+      }
+      console.log('[Productos] Creado en servidor:', cData.ok?'OK':'ERROR', cData.product?.id||'');
     } else {
-      await authFetch(FACTURACL.url+'/api/pos/products/'+prod.id, {
+      var uResp=await authFetch(FACTURACL.url+'/api/pos/products/'+prod.id, {
         method:'PUT',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify(payload),
       });
+      var uData=await uResp.json();
+      console.log('[Productos] Actualizado en servidor:', uData.ok?'OK':'ERROR', prod.id);
+      if(!uData.ok) console.warn('[Productos] Error update:', uData.error, uData.message);
     }
   } catch(e){ console.warn('[Productos] Error sincronizando con servidor:', e.message); }
 }
@@ -2739,12 +2834,13 @@ async function syncDatosInicial() {
 // ── Sync venta al servidor (non-blocking) ────────────────────
 function syncVentaServidor(snapshot) {
   if (!AUTH.access_token || AUTH.access_token === 'test-local') return;
+  var uuidRe=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   authFetch(FACTURACL.url + '/api/pos/sales', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       pos_sale_ref:    snapshot.id,
-      items:           snapshot.items.map(function(i) { return { product_id: i.id || null, name: i.name, qty: i.qty, price: i.price }; }),
+      items:           snapshot.items.map(function(i) { var pid=String(i.id||''); return { product_id: uuidRe.test(pid)?pid:null, name: i.name, qty: i.qty, price: i.price }; }),
       subtotal:        snapshot.totales.subtotal,
       discount_type:   STATE.discType || null,
       discount_value:  parseFloat(document.getElementById('disc-val')?.value) || 0,
