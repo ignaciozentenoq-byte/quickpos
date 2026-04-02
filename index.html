@@ -689,6 +689,16 @@ tr:hover .tbl-row-acts{opacity:1;}
           <div class="chart-title-row"><div class="chart-title">Top productos</div></div>
           <div id="rpt-top-prods"></div>
         </div>
+        <div class="chart-card" id="conciliacion-card">
+          <div class="chart-title-row" style="margin-bottom:12px">
+            <div class="chart-title">Conciliación ventas vs DTE</div>
+            <button class="tb-btn" onclick="renderConciliacion()" style="font-size:11px;padding:4px 10px">↻ Actualizar</button>
+          </div>
+          <div id="conciliacion-summary" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px"></div>
+          <div id="conciliacion-table" style="max-height:300px;overflow-y:auto">
+            <div style="text-align:center;color:var(--text3);padding:16px;font-size:12px">Cargando conciliación…</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1732,6 +1742,190 @@ function renderReports(){
     html+='</div>';
   });
   document.getElementById('rpt-top-prods').innerHTML=html;
+
+  // Cargar conciliación automáticamente
+  renderConciliacion();
+}
+
+// ── Conciliación ventas vs DTE (5a) ──────────────────────────
+async function renderConciliacion() {
+  var sumEl  = document.getElementById('conciliacion-summary');
+  var tblEl  = document.getElementById('conciliacion-table');
+  if (!sumEl || !tblEl) return;
+
+  tblEl.innerHTML = '<div style="text-align:center;color:var(--text3);padding:16px;font-size:12px">Cargando…</div>';
+
+  // 1. Obtener ventas locales de IndexedDB
+  var locales = [];
+  try { locales = await getTodasVentas(); } catch(e) {}
+
+  // 2. Obtener DTEs emitidos desde FacturaCL
+  var remotos = [];
+  try {
+    var controller = new AbortController();
+    var timer = setTimeout(function() { controller.abort(); }, 8000);
+    var res = await fetch(FACTURACL.url + '/history?limit=200', {
+      headers: { 'X-API-Key': FACTURACL.apiKey },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      var data = await res.json();
+      remotos = Array.isArray(data) ? data : (data.documents || data.docs || []);
+    }
+  } catch(e) {
+    console.log('[Conciliación] Sin acceso a FacturaCL:', e.message);
+  }
+
+  // 3. Crear mapa de DTEs remotos por pos_sale_id
+  var dteMap = {};
+  remotos.forEach(function(d) {
+    if (d.pos_sale_id) dteMap[d.pos_sale_id] = d;
+  });
+
+  // 4. Clasificar cada venta local
+  var conciliadas  = 0; // emitida local + DTE remoto OK
+  var pendientes   = 0; // pendiente/enviando local, sin DTE remoto
+  var errores      = 0; // error_permanente local
+  var descuadradas = 0; // emitida local pero sin DTE remoto (o viceversa)
+  var totalLocal   = 0;
+  var totalDTE     = 0;
+
+  var filas = locales.map(function(v) {
+    var dteRemoto = dteMap[v.id];
+    var estado, color, icono;
+
+    totalLocal += v.totales?.total || 0;
+
+    if (v.estado === 'emitida' && dteRemoto) {
+      estado = 'Conciliada';
+      color = 'var(--green)';
+      icono = '✅';
+      conciliadas++;
+      totalDTE += dteRemoto.total || v.totales?.total || 0;
+    } else if (v.estado === 'emitida' && !dteRemoto) {
+      estado = 'Sin DTE remoto';
+      color = 'var(--amber)';
+      icono = '⚠';
+      descuadradas++;
+    } else if (v.estado === 'error_permanente') {
+      estado = 'Error permanente';
+      color = 'var(--red)';
+      icono = '❌';
+      errores++;
+    } else {
+      estado = 'Pendiente';
+      color = 'var(--amber)';
+      icono = '⏳';
+      pendientes++;
+    }
+
+    // Marcar usada en mapa
+    if (dteRemoto) dteRemoto._matched = true;
+
+    return {
+      id: v.id,
+      ref: v.ref || v.id.slice(0,8),
+      fecha: v.created_at,
+      total: v.totales?.total || 0,
+      medioPago: v.medioPago || '—',
+      estado: estado,
+      color: color,
+      icono: icono,
+      docNum: dteRemoto ? (dteRemoto.doc_number || '—') : '—',
+    };
+  });
+
+  // DTEs remotos sin venta local (huérfanos)
+  remotos.forEach(function(d) {
+    if (!d._matched && d.pos_sale_id) {
+      descuadradas++;
+      totalDTE += d.total || 0;
+      filas.push({
+        id: d.pos_sale_id,
+        ref: (d.pos_sale_id || '').slice(0,8),
+        fecha: d.issued_at || d.created_at || '',
+        total: d.total || 0,
+        medioPago: '—',
+        estado: 'Solo en SII',
+        color: 'var(--purple)',
+        icono: '🔮',
+        docNum: d.doc_number || '—',
+      });
+    }
+  });
+
+  // Ordenar: problemas primero
+  var orden = { 'Error permanente':0, 'Sin DTE remoto':1, 'Solo en SII':2, 'Pendiente':3, 'Conciliada':4 };
+  filas.sort(function(a, b) {
+    var od = (orden[a.estado] ?? 9) - (orden[b.estado] ?? 9);
+    return od !== 0 ? od : (b.fecha || '').localeCompare(a.fecha || '');
+  });
+
+  // 5. Render summary cards
+  sumEl.innerHTML =
+    '<div style="background:var(--greenbg);border:1px solid var(--green);border-radius:8px;padding:8px;text-align:center">' +
+      '<div style="font-size:20px;font-weight:700;color:var(--green);font-family:var(--mono)">' + conciliadas + '</div>' +
+      '<div style="font-size:10px;color:var(--text2)">Conciliadas</div>' +
+    '</div>' +
+    '<div style="background:var(--amberbg);border:1px solid var(--amber);border-radius:8px;padding:8px;text-align:center">' +
+      '<div style="font-size:20px;font-weight:700;color:var(--amber);font-family:var(--mono)">' + pendientes + '</div>' +
+      '<div style="font-size:10px;color:var(--text2)">Pendientes</div>' +
+    '</div>' +
+    '<div style="background:var(--redbg);border:1px solid var(--red);border-radius:8px;padding:8px;text-align:center">' +
+      '<div style="font-size:20px;font-weight:700;color:var(--red);font-family:var(--mono)">' + errores + '</div>' +
+      '<div style="font-size:10px;color:var(--text2)">Errores</div>' +
+    '</div>' +
+    '<div style="background:var(--purplebg);border:1px solid var(--purple);border-radius:8px;padding:8px;text-align:center">' +
+      '<div style="font-size:20px;font-weight:700;color:var(--purple);font-family:var(--mono)">' + descuadradas + '</div>' +
+      '<div style="font-size:10px;color:var(--text2)">Descuadradas</div>' +
+    '</div>';
+
+  // 6. Render tabla
+  if (filas.length === 0) {
+    tblEl.innerHTML = '<div style="text-align:center;color:var(--text3);padding:16px;font-size:12px">No hay ventas registradas</div>';
+    return;
+  }
+
+  var medios = { efectivo:'Efvo', debito:'Déb', credito:'Créd', transferencia:'Trf' };
+  var thtml = '<table style="width:100%;border-collapse:collapse;font-size:11px">' +
+    '<thead><tr style="color:var(--text3);text-align:left;border-bottom:1px solid var(--border)">' +
+      '<th style="padding:6px 4px">Estado</th>' +
+      '<th style="padding:6px 4px">Folio</th>' +
+      '<th style="padding:6px 4px">N° DTE</th>' +
+      '<th style="padding:6px 4px">Fecha</th>' +
+      '<th style="padding:6px 4px">Pago</th>' +
+      '<th style="padding:6px 4px;text-align:right">Total</th>' +
+    '</tr></thead><tbody>';
+
+  filas.forEach(function(f) {
+    var fecha = f.fecha ? new Date(f.fecha).toLocaleString('es-CL', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+    thtml += '<tr style="border-bottom:1px solid var(--border)">' +
+      '<td style="padding:5px 4px"><span style="color:' + f.color + '">' + f.icono + ' ' + f.estado + '</span></td>' +
+      '<td style="padding:5px 4px;font-family:var(--mono);color:var(--text3)">' + f.ref + '</td>' +
+      '<td style="padding:5px 4px;font-family:var(--mono)">' + f.docNum + '</td>' +
+      '<td style="padding:5px 4px;color:var(--text2)">' + fecha + '</td>' +
+      '<td style="padding:5px 4px">' + (medios[f.medioPago] || f.medioPago) + '</td>' +
+      '<td style="padding:5px 4px;text-align:right;font-family:var(--mono);font-weight:600">' + fmt(f.total) + '</td>' +
+    '</tr>';
+  });
+
+  thtml += '</tbody></table>';
+
+  // Diferencia de montos
+  var diff = totalLocal - totalDTE;
+  if (remotos.length > 0 && Math.abs(diff) > 0) {
+    thtml += '<div style="margin-top:8px;padding:8px;border-radius:6px;background:var(--bg3);font-size:11px;display:flex;justify-content:space-between">' +
+      '<span style="color:var(--text3)">Total local: ' + fmt(totalLocal) + ' · Total DTE: ' + fmt(totalDTE) + '</span>' +
+      '<span style="font-weight:600;color:' + (Math.abs(diff) > 0 ? 'var(--amber)' : 'var(--green)') + '">Diferencia: ' + fmt(diff) + '</span>' +
+    '</div>';
+  } else if (remotos.length === 0) {
+    thtml += '<div style="margin-top:8px;padding:8px;border-radius:6px;background:var(--amberbg);font-size:11px;color:var(--amber);text-align:center">' +
+      'Sin conexión a FacturaCL — mostrando solo datos locales' +
+    '</div>';
+  }
+
+  tblEl.innerHTML = thtml;
 }
 
 // ════════════════════════════════════════════════════
