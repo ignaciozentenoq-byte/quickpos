@@ -548,6 +548,11 @@ tr:hover .tbl-row-acts{opacity:1;}
       <div class="nav-sep"></div>
       <button class="nav-item" id="ni-config"    onclick="switchMod('config')">⚙️<span class="nav-tooltip">Configuración</span></button>
       <button class="nav-item" id="ni-saas"      onclick="switchMod('saas')">🏢<span class="nav-tooltip">Panel SaaS</span></button>
+      <div class="nav-sep"></div>
+      <button class="nav-item" id="ni-cola" onclick="mostrarColaVentas()" style="position:relative">
+        📋<span class="nav-tooltip">Cola de ventas</span>
+        <span id="queue-badge" style="display:none;position:absolute;top:2px;right:2px;min-width:16px;height:16px;border-radius:8px;background:var(--amber);color:#fff;font-size:9px;font-weight:700;align-items:center;justify-content:center;padding:0 3px">0</span>
+      </button>
     </div>
 
     <!-- ══ MOD: POS ══════════════════════════════════ -->
@@ -652,9 +657,8 @@ tr:hover .tbl-row-acts{opacity:1;}
         <button class="tb-btn" onclick="window.print()">🖨 Imprimir</button>
         <button class="tb-btn" onclick="showToast('Exportando Excel…','info')">⬇ Exportar</button>
         <button class="tb-btn danger" onclick="showToast('Cerrando turno…','success')">⏹ Cerrar turno</button>
-        <button class="tb-btn" onclick="mostrarColaVentas()" style="position:relative;padding-right:20px">
-          📋 Cola
-          <span id="queue-badge" style="display:none;position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;border-radius:9px;background:var(--amber);color:#fff;font-size:10px;font-weight:700;align-items:center;justify-content:center;padding:0 4px">0</span>
+        <button class="tb-btn" onclick="mostrarColaVentas()">
+          📋 Cola de ventas
         </button>
       </div>
       <div class="rpt-body">
@@ -2249,7 +2253,7 @@ async function iniciarCola() {
   procesarCola();            // procesar pendientes al iniciar
 
   // ── Health check activo cada 15s ─────────────────────────
-  // No dependemos del evento 'online' — hacemos ping real a FacturaCL
+  // Ping real a FacturaCL — no dependemos del evento 'online' del browser
   var _eraOffline = false;
 
   async function healthCheck() {
@@ -2264,7 +2268,6 @@ async function iniciarCola() {
           _eraOffline = false;
           showToast('Conexión restaurada · Procesando cola…', 'success');
         }
-        // Si hay pendientes, procesar cola
         var pendientes = await getVentasPendientes();
         if (pendientes.length > 0) {
           procesarCola();
