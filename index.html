@@ -548,6 +548,11 @@ tr:hover .tbl-row-acts{opacity:1;}
       <div class="nav-sep"></div>
       <button class="nav-item" id="ni-config"    onclick="switchMod('config')">⚙️<span class="nav-tooltip">Configuración</span></button>
       <button class="nav-item" id="ni-saas"      onclick="switchMod('saas')">🏢<span class="nav-tooltip">Panel SaaS</span></button>
+      <div class="nav-sep"></div>
+      <button class="nav-item" id="ni-cola" onclick="mostrarColaVentas()" style="position:relative">
+        📋<span class="nav-tooltip">Cola de ventas</span>
+        <span id="queue-badge" style="display:none;position:absolute;top:2px;right:2px;min-width:16px;height:16px;border-radius:8px;background:var(--amber);color:#fff;font-size:9px;font-weight:700;align-items:center;justify-content:center;padding:0 3px">0</span>
+      </button>
     </div>
 
     <!-- ══ MOD: POS ══════════════════════════════════ -->
@@ -652,9 +657,8 @@ tr:hover .tbl-row-acts{opacity:1;}
         <button class="tb-btn" onclick="window.print()">🖨 Imprimir</button>
         <button class="tb-btn" onclick="showToast('Exportando Excel…','info')">⬇ Exportar</button>
         <button class="tb-btn danger" onclick="showToast('Cerrando turno…','success')">⏹ Cerrar turno</button>
-        <button class="tb-btn" onclick="mostrarColaVentas()" style="position:relative;padding-right:20px">
-          📋 Cola
-          <span id="queue-badge" style="display:none;position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;border-radius:9px;background:var(--amber);color:#fff;font-size:10px;font-weight:700;align-items:center;justify-content:center;padding:0 4px">0</span>
+        <button class="tb-btn" onclick="mostrarColaVentas()">
+          📋 Cola de ventas
         </button>
       </div>
       <div class="rpt-body">
@@ -2248,13 +2252,21 @@ async function iniciarCola() {
   await actualizarBadge();   // (4a) mostrar badge inicial
   procesarCola();            // procesar pendientes al iniciar
 
-  // Worker cada 30 segundos (3a)
-  setInterval(procesarCola, 30 * 1000);
+  // Worker cada 15 segundos (3a) — más reactivo
+  setInterval(procesarCola, 15 * 1000);
 
   // Reintentar inmediatamente al volver online (3i)
   window.addEventListener('online', function() {
     showToast('Conexión restaurada · Reintentando DTEs pendientes…', 'info');
-    setTimeout(procesarCola, 1000);
+    // Reintentar varias veces seguidas al reconectar
+    setTimeout(procesarCola, 500);
+    setTimeout(procesarCola, 3000);
+    setTimeout(procesarCola, 8000);
+  });
+
+  // También revisar al hacer focus en la ventana (usuario vuelve a la app)
+  window.addEventListener('focus', function() {
+    setTimeout(procesarCola, 500);
   });
 }
 
