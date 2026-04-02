@@ -1895,6 +1895,7 @@ var _healthInterval = null;   // referencia al setInterval activo
 var _eraOffline = false;      // estado de conectividad
 var BACKOFF_SECONDS = [30, 60, 300, 900, 1800]; // 30s,1m,5m,15m,30m
 var MAX_QUEUE_ATTEMPTS = 5;
+var PURGE_EMITIDAS_MS = 48 * 60 * 60 * 1000; // auto-purgar emitidas después de 48h
 
 // ── Inicializar IndexedDB ─────────────────────────────────────
 function initDB() {
@@ -2292,9 +2293,18 @@ async function mostrarColaVentas() {
           _prevGrupo = grupo;
           var secLabel = esPermanente ? '❌ Errores permanentes'
                        : (esPendiente || esEnviando) ? '⏳ En cola'
-                       : '✅ Emitidas';
+                       : '✅ Emitidas (' + cEmit + ')';
           var secColor = esPermanente ? 'var(--red)' : (esPendiente || esEnviando) ? 'var(--amber)' : 'var(--green)';
-          seccion = '<div style="font-size:11px;font-weight:700;color:' + secColor + ';padding:10px 4px 4px;letter-spacing:.5px;text-transform:uppercase">' + secLabel + '</div>';
+          if (esEmitida) {
+            // Sección colapsable + botón limpiar
+            seccion = '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 4px 4px">' +
+              '<span onclick="var s=document.getElementById(\'emitidas-list\');s.style.display=s.style.display===\'none\'?\'block\':\'none\';this.textContent=s.style.display===\'none\'?\'▸ ' + secLabel + '\':\'▾ ' + secLabel + '\'" style="font-size:11px;font-weight:700;color:' + secColor + ';letter-spacing:.5px;text-transform:uppercase;cursor:pointer">▸ ' + secLabel + '</span>' +
+              '<button onclick="limpiarHistorial()" style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid var(--border2);background:var(--bg3);color:var(--text3);cursor:pointer">🗑 Limpiar historial</button>' +
+            '</div>' +
+            '<div id="emitidas-list" style="display:none">';
+          } else {
+            seccion = '<div style="font-size:11px;font-weight:700;color:' + secColor + ';padding:10px 4px 4px;letter-spacing:.5px;text-transform:uppercase">' + secLabel + '</div>';
+          }
         }
 
         return seccion +
@@ -2309,7 +2319,7 @@ async function mostrarColaVentas() {
           '</div>' +
           proximoStr + errorStr + btnStr +
         '</div>';
-      }).join('');
+      }).join('') + (cEmit > 0 ? '</div>' : ''); // cerrar div#emitidas-list si existe
 
   // Abrir modal con la lista
   var titulo = 'Cola de ventas — ' +
@@ -2338,6 +2348,43 @@ async function reprocesarTodosErrores() {
   procesarCola();
 }
 window.reprocesarTodosErrores = reprocesarTodosErrores;
+
+// ── Auto-purga de emitidas antiguas (>48h) ───────────────────
+async function purgarEmitidasAntiguas() {
+  try {
+    var todas = await getTodasVentas();
+    var ahora = Date.now();
+    var db = await initDB();
+    var borradas = 0;
+    for (var i = 0; i < todas.length; i++) {
+      var v = todas[i];
+      if (v.estado === 'emitida' && v.created_at) {
+        if (ahora - new Date(v.created_at).getTime() > PURGE_EMITIDAS_MS) {
+          var tx = db.transaction('ventas', 'readwrite');
+          tx.objectStore('ventas').delete(v.id);
+          borradas++;
+        }
+      }
+    }
+    if (borradas > 0) console.log('[Cola] Purgadas', borradas, 'emitidas antiguas (>48h)');
+  } catch (e) { console.warn('[Cola] Error en purga:', e.message); }
+}
+
+// ── Limpiar historial completo de emitidas ───────────────────
+async function limpiarHistorial() {
+  var todas = await getTodasVentas();
+  var emitidas = todas.filter(function(v) { return v.estado === 'emitida'; });
+  if (emitidas.length === 0) return;
+  var db = await initDB();
+  for (var i = 0; i < emitidas.length; i++) {
+    var tx = db.transaction('ventas', 'readwrite');
+    tx.objectStore('ventas').delete(emitidas[i].id);
+  }
+  await actualizarBadge();
+  showToast(emitidas.length + ' emitidas eliminadas del historial', 'info');
+  mostrarColaVentas();
+}
+window.limpiarHistorial = limpiarHistorial;
 
 // ── Reintentar venta manualmente ─────────────────────────────
 async function reintentarVenta(id) {
@@ -2429,6 +2476,7 @@ async function iniciarCola() {
 
   await initDB();
   await recuperarLocks();    // (3l) recuperar locks huérfanos
+  await purgarEmitidasAntiguas(); // limpiar emitidas > 48h
   await actualizarBadge();   // (4a) mostrar badge inicial
   procesarCola();            // procesar pendientes al iniciar
 
