@@ -901,8 +901,10 @@ www.elbuensabor.cl</textarea></div>
 // ════════════════════════════════════════════════════
 // DATA
 // ════════════════════════════════════════════════════
+// Categorías hardcodeadas como fallback — se sobreescriben con datos de Supabase
 var CATS = [{id:'all',label:'Todos'},{id:'comida',label:'🍔 Comida'},{id:'jugos',label:'🥤 Jugos'},{id:'bebidas',label:'🥤 Bebidas'},{id:'cafe',label:'☕ Café'},{id:'te',label:'🍵 Té'},{id:'postres',label:'🍰 Postres'}];
 var CAT_COLORS = {comida:'#f5a623',jugos:'#22c97a',bebidas:'#4f8ef7',cafe:'#9b6ef7',te:'#2dd4bf',postres:'#f04f4f'};
+var CATEGORIES_DB = []; // se llena desde IndexedDB/Supabase
 var PRODUCTS = [
   {id:1,name:'Hamburguesa Clasica',price:4500,cost:1800,cat:'comida',emoji:'🍔',tag:'hot',status:'active',featured:true,stock:42,ctrlStock:true},
   {id:2,name:'Completo Italiano',  price:3200,cost:1100,cat:'comida',emoji:'🌭',tag:'',   status:'active',featured:false,stock:28,ctrlStock:true},
@@ -1001,11 +1003,12 @@ var STATE = {
   drawerContext: null,
 };
 
-var USERS_AUTH = [
-  {email:'admin@buensabor.cl',pass:'123456',name:'Pedro A.',initials:'PA',color:'#9b6ef7'},
-  {email:'cajera@buensabor.cl',pass:'123456',name:'Ana M.',  initials:'AM',color:'#4f8ef7'},
-  {email:'vendedor@buensabor.cl',pass:'123456',name:'Carlos V.',initials:'CV',color:'#22c97a'},
-];
+// Auth tokens y sesión cacheada
+var AUTH = {
+  access_token: null,
+  refresh_token: null,
+  expires_at: null,
+};
 
 var MODE_CFG = {
   cajero:  {label:'Solo Caja',       dot:'#4f8ef7'},
@@ -1048,35 +1051,154 @@ function togglePass() {
   btn.textContent=inp.type==='password'?'👁':'🙈';
 }
 
-function doLogin() {
-  var email=document.getElementById('l-email').value.trim().toLowerCase();
-  var pass =document.getElementById('l-pass').value;
-  var btn  =document.getElementById('l-btn');
-  var err  =document.getElementById('l-err');
-  if (!email||!pass){showToast('Completa todos los campos','error');return;}
-  btn.disabled=true;
-  btn.innerHTML='<span class="spin"></span>Verificando…';
-  setTimeout(function(){
-    var user=null;
-    for(var i=0;i<USERS_AUTH.length;i++){if(USERS_AUTH[i].email===email&&USERS_AUTH[i].pass===pass){user=USERS_AUTH[i];break;}}
-    btn.disabled=false;
-    btn.textContent='Iniciar sesión';
-    if(!user){
-      err.style.display='block';
-      showToast('Credenciales incorrectas','error');
-      setTimeout(function(){err.style.display='none';},2500);
+// ── Hash SHA-256 para cache offline (no se almacena password en claro) ──
+async function sha256(str) {
+  var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+}
+
+// ── Cache de sesión offline ─────────────────────────────────
+function cacheSession(email, passHash, authResponse) {
+  var cached = JSON.parse(localStorage.getItem('qpos_sessions') || '{}');
+  cached[email] = {
+    passHash: passHash,
+    user: authResponse.user,
+    access_token: authResponse.access_token,
+    refresh_token: authResponse.refresh_token,
+    expires_at: authResponse.expires_at,
+    cached_at: new Date().toISOString(),
+  };
+  localStorage.setItem('qpos_sessions', JSON.stringify(cached));
+}
+
+function getCachedSession(email) {
+  var cached = JSON.parse(localStorage.getItem('qpos_sessions') || '{}');
+  return cached[email] || null;
+}
+
+// ── Login principal — online con fallback offline ───────────
+async function doLogin() {
+  var email = document.getElementById('l-email').value.trim().toLowerCase();
+  var pass  = document.getElementById('l-pass').value;
+  var btn   = document.getElementById('l-btn');
+  var err   = document.getElementById('l-err');
+  if (!email || !pass) { showToast('Completa todos los campos','error'); return; }
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>Verificando…';
+  err.style.display = 'none';
+
+  var passHash = await sha256(email + ':' + pass);
+
+  try {
+    // Intentar login online
+    var controller = new AbortController();
+    var timer = setTimeout(function(){ controller.abort(); }, 8000);
+    var resp = await fetch(FACTURACL.url + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email, password: pass }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    var data = await resp.json();
+    btn.disabled = false;
+    btn.textContent = 'Iniciar sesión';
+
+    if (!data.ok) {
+      err.style.display = 'block';
+      showToast(data.message || 'Credenciales incorrectas', 'error');
+      setTimeout(function(){ err.style.display = 'none'; }, 2500);
       return;
     }
-    STATE.user=user;
+
+    // Login exitoso — guardar tokens y cache offline
+    AUTH.access_token  = data.access_token;
+    AUTH.refresh_token = data.refresh_token;
+    AUTH.expires_at    = data.expires_at;
+    STATE.user = data.user;
+    if (data.user.tenant) STATE.tenant = data.user.tenant;
+
+    cacheSession(email, passHash, data);
+    showToast('Bienvenido, ' + data.user.name, 'ok');
     showView('role');
-  },800);
+
+  } catch (e) {
+    // Sin conexión — intentar login offline
+    var cached = getCachedSession(email);
+    btn.disabled = false;
+    btn.textContent = 'Iniciar sesión';
+
+    if (cached && cached.passHash === passHash) {
+      // Credenciales coinciden con cache
+      AUTH.access_token  = cached.access_token;
+      AUTH.refresh_token = cached.refresh_token;
+      AUTH.expires_at    = cached.expires_at;
+      STATE.user = cached.user;
+      if (cached.user.tenant) STATE.tenant = cached.user.tenant;
+      showToast('Modo offline — sesión local', 'info');
+      showView('role');
+    } else if (cached) {
+      err.style.display = 'block';
+      showToast('Credenciales incorrectas (offline)', 'error');
+      setTimeout(function(){ err.style.display = 'none'; }, 2500);
+    } else {
+      err.style.display = 'block';
+      showToast('Sin conexión y sin sesión previa. Conéctate para el primer login.', 'error');
+      setTimeout(function(){ err.style.display = 'none'; }, 4000);
+    }
+  }
 }
 
 function goBack() {
   STATE.cart=[];STATE.pendingOrders=[];STATE.user=null;
+  AUTH.access_token=null;AUTH.refresh_token=null;AUTH.expires_at=null;
   showView('login');
   document.getElementById('l-email').value='';
   document.getElementById('l-pass').value='';
+}
+
+// ── Refresh automático de token ─────────────────────────────
+async function refreshAuthToken() {
+  if (!AUTH.refresh_token) return false;
+  try {
+    var resp = await fetch(FACTURACL.url + '/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: AUTH.refresh_token }),
+    });
+    var data = await resp.json();
+    if (data.ok) {
+      AUTH.access_token  = data.access_token;
+      AUTH.refresh_token = data.refresh_token;
+      AUTH.expires_at    = data.expires_at;
+      return true;
+    }
+  } catch(e) { /* offline — usar token existente */ }
+  return false;
+}
+
+// ── Fetch autenticado con auto-refresh ──────────────────────
+async function authFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = opts.headers || {};
+  if (AUTH.access_token) {
+    // Verificar si el token está por expirar (< 5 min)
+    if (AUTH.expires_at && (AUTH.expires_at * 1000 - Date.now()) < 300000) {
+      await refreshAuthToken();
+    }
+    opts.headers['Authorization'] = 'Bearer ' + AUTH.access_token;
+  }
+  var resp = await fetch(url, opts);
+  // Si 401, intentar refresh y reintentar
+  if (resp.status === 401 && AUTH.refresh_token) {
+    var refreshed = await refreshAuthToken();
+    if (refreshed) {
+      opts.headers['Authorization'] = 'Bearer ' + AUTH.access_token;
+      resp = await fetch(url, opts);
+    }
+  }
+  return resp;
 }
 
 // ════════════════════════════════════════════════════
@@ -1088,6 +1210,8 @@ function enterApp(mode) {
   applyMode(mode);
   initPOS();
   startClock();
+  // Sync productos/categorías desde servidor (no bloquea UI)
+  syncDatosInicial();
   renderCfgSections();
 }
 
@@ -1130,6 +1254,11 @@ function initPOS() {
   switchMod('pos');
 }
 
+function renderCatalog() {
+  renderCats();
+  renderProds();
+}
+
 function seedDemoPending() {
   if(STATE.pendingOrders.length>0)return;
   STATE.pendingOrders=[
@@ -1142,6 +1271,13 @@ function seedDemoPending() {
 // POS — PRODUCTS
 // ════════════════════════════════════════════════════
 function renderCats() {
+  // Si hay categorías de BD, reconstruir CATS dinámicamente
+  if (CATEGORIES_DB.length > 0) {
+    CATS = [{id:'all',label:'Todos'}];
+    CATEGORIES_DB.forEach(function(c) {
+      CATS.push({id: c.id, label: (c.emoji ? c.emoji + ' ' : '') + c.name});
+    });
+  }
   var html='';
   for(var i=0;i<CATS.length;i++){
     var c=CATS[i];
@@ -2176,7 +2312,7 @@ function showToast(msg,type){
 // Pasos: 2a-2m, 3a-3l, 4a-4g del checklist
 // ════════════════════════════════════════════════════
 
-var SCHEMA_VERSION = 1;
+var SCHEMA_VERSION = 2;
 var _db = null;
 var _workerLock = false;
 var _colaIniciada = false;    // guard contra doble inicialización
@@ -2185,23 +2321,160 @@ var _eraOffline = false;      // estado de conectividad
 var BACKOFF_SECONDS = [30, 60, 300, 900, 1800]; // 30s,1m,5m,15m,30m
 var MAX_QUEUE_ATTEMPTS = 5;
 var PURGE_EMITIDAS_MS = 48 * 60 * 60 * 1000; // auto-purgar emitidas después de 48h
+var _lastProductSync = null;  // ISO timestamp del último sync de productos
 
 // ── Inicializar IndexedDB ─────────────────────────────────────
 function initDB() {
   return new Promise(function(resolve, reject) {
     if (_db) { resolve(_db); return; }
-    var req = indexedDB.open('quickpos_queue', 1);
+    var req = indexedDB.open('quickpos_queue', 2);
     req.onupgradeneeded = function(e) {
       var db = e.target.result;
+      // v1: cola de ventas
       if (!db.objectStoreNames.contains('ventas')) {
         var store = db.createObjectStore('ventas', { keyPath: 'id' });
         store.createIndex('estado', 'estado', { unique: false });
         store.createIndex('created_at', 'created_at', { unique: false });
       }
+      // v2: productos y categorías offline
+      if (!db.objectStoreNames.contains('productos')) {
+        var ps = db.createObjectStore('productos', { keyPath: 'id' });
+        ps.createIndex('category_id', 'category_id', { unique: false });
+        ps.createIndex('status', 'status', { unique: false });
+        ps.createIndex('updated_at', 'updated_at', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('categorias')) {
+        db.createObjectStore('categorias', { keyPath: 'id' });
+      }
     };
     req.onsuccess = function(e) { _db = e.target.result; resolve(_db); };
     req.onerror   = function(e) { reject(e.target.error); };
   });
+}
+
+// ── Sync productos desde servidor ───────────────────────────
+async function syncProductos() {
+  if (!AUTH.access_token) return;
+  try {
+    var sinceParam = _lastProductSync ? '?since=' + encodeURIComponent(_lastProductSync) : '?status=active';
+    var resp = await authFetch(FACTURACL.url + '/api/pos/products' + sinceParam);
+    if (!resp.ok) return;
+    var data = await resp.json();
+    if (!data.ok) return;
+
+    var db = await initDB();
+    var tx = db.transaction('productos', 'readwrite');
+    var store = tx.objectStore('productos');
+    data.products.forEach(function(p) {
+      // Mapear a formato compatible con el POS
+      store.put({
+        id: p.id,
+        name: p.name,
+        price: p.price,
+        cost: p.cost || 0,
+        cat: p.category_id,
+        emoji: p.emoji || '',
+        tag: p.tag || '',
+        status: p.status,
+        featured: p.featured,
+        stock: p.stock,
+        ctrlStock: p.track_stock,
+        stock_alert: p.stock_alert,
+        sku: p.sku || '',
+        sort_order: p.sort_order,
+        updated_at: p.updated_at,
+      });
+    });
+
+    _lastProductSync = data.server_ts;
+    localStorage.setItem('qpos_last_product_sync', data.server_ts);
+    console.log('[Sync] ' + data.products.length + ' productos sincronizados');
+  } catch(e) {
+    console.warn('[Sync] Error sincronizando productos:', e.message);
+  }
+}
+
+// ── Sync categorías desde servidor ──────────────────────────
+async function syncCategorias() {
+  if (!AUTH.access_token) return;
+  try {
+    var resp = await authFetch(FACTURACL.url + '/api/pos/products/categories');
+    if (!resp.ok) return;
+    var data = await resp.json();
+    if (!data.ok) return;
+
+    var db = await initDB();
+    var tx = db.transaction('categorias', 'readwrite');
+    var store = tx.objectStore('categorias');
+    // Limpiar y recargar (las categorías son pocas)
+    store.clear();
+    data.categories.forEach(function(c) {
+      store.put({
+        id: c.id,
+        name: c.name,
+        emoji: c.emoji || '',
+        sort_order: c.sort_order,
+        active: c.active,
+      });
+    });
+
+    console.log('[Sync] ' + data.categories.length + ' categorías sincronizadas');
+  } catch(e) {
+    console.warn('[Sync] Error sincronizando categorías:', e.message);
+  }
+}
+
+// ── Cargar productos desde IndexedDB ────────────────────────
+async function cargarProductosOffline() {
+  try {
+    var db = await initDB();
+    return new Promise(function(resolve) {
+      var tx = db.transaction('productos', 'readonly');
+      var store = tx.objectStore('productos');
+      var req = store.getAll();
+      req.onsuccess = function() {
+        var prods = req.result.filter(function(p){ return p.status === 'active'; });
+        prods.sort(function(a,b){ return (a.sort_order||0) - (b.sort_order||0); });
+        resolve(prods);
+      };
+      req.onerror = function() { resolve([]); };
+    });
+  } catch(e) { return []; }
+}
+
+// ── Cargar categorías desde IndexedDB ───────────────────────
+async function cargarCategoriasOffline() {
+  try {
+    var db = await initDB();
+    return new Promise(function(resolve) {
+      var tx = db.transaction('categorias', 'readonly');
+      var store = tx.objectStore('categorias');
+      var req = store.getAll();
+      req.onsuccess = function() {
+        var cats = req.result.filter(function(c){ return c.active; });
+        cats.sort(function(a,b){ return (a.sort_order||0) - (b.sort_order||0); });
+        resolve(cats);
+      };
+      req.onerror = function() { resolve([]); };
+    });
+  } catch(e) { return []; }
+}
+
+// ── Sync completo al iniciar sesión ─────────────────────────
+async function syncDatosInicial() {
+  _lastProductSync = localStorage.getItem('qpos_last_product_sync');
+  await Promise.all([syncProductos(), syncCategorias()]);
+  // Actualizar PRODUCTS global con datos de IndexedDB
+  var prods = await cargarProductosOffline();
+  if (prods.length > 0) {
+    PRODUCTS = prods;
+    // Actualizar categorías del menú
+    var cats = await cargarCategoriasOffline();
+    if (cats.length > 0) {
+      CATEGORIES_DB = cats;
+    }
+    renderCatalog();
+  }
 }
 
 // ── Guardar venta en cola ─────────────────────────────────────
@@ -2272,9 +2545,12 @@ async function eliminarVenta(id) {
 
 // ── Generar UUID simple ───────────────────────────────────────
 function generarUUID() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    var r = Math.random() * 16 | 0;
-    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback con crypto.getRandomValues (más seguro que Math.random)
+  return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, function(c) {
+    return (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16);
   });
 }
 
