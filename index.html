@@ -2234,7 +2234,12 @@ async function reintentarVenta(id) {
   showToast('Reintentando…', 'info');
   if (typeof closeModal === 'function') closeModal();
 }
-window.reintentarVenta = reintentarVenta;
+window.reintentarVenta    = reintentarVenta;
+window.mostrarColaVentas  = mostrarColaVentas;
+window.recuperarLocks     = recuperarLocks;
+window.iniciarCola        = iniciarCola;
+window.procesarCola       = procesarCola;
+window.actualizarBadge    = actualizarBadge;
 
 // Event delegation para botones reintentar en la lista de cola
 document.addEventListener('click', function(e) {
@@ -2243,7 +2248,6 @@ document.addEventListener('click', function(e) {
     if (id) reintentarVenta(id);
   }
 });
-window.mostrarColaVentas = mostrarColaVentas;
 
 // ── Iniciar sistema de cola ───────────────────────────────────
 async function iniciarCola() {
