@@ -1,4 +1,4 @@
-var CACHE_NAME = 'quickpos-v5';
+var CACHE_NAME = 'quickpos-v6';
 var ASSETS = [
   '/',
   '/manifest.json',
