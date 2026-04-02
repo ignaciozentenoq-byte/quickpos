@@ -1102,10 +1102,11 @@ function applyMode(mode) {
   if(mode==='cajero'){
     document.getElementById('pp-title').textContent='Pedidos pendientes';
     seedDemoPending();
-  iniciarCola();
   } else if(mode==='vendedor'){
     document.getElementById('pp-title').textContent='Mis pedidos';
   }
+  // Iniciar cola para todos los modos que pueden vender
+  iniciarCola();
   renderPendingList();
 }
 
@@ -2297,12 +2298,13 @@ async function mostrarColaVentas() {
     '</div>' +
   '</div>';
 
-  // Botones de acción global
+  // Botones de acción global — solo visibles para supervisor
+  var esSupervisor = STATE.mode !== 'cajero' && STATE.mode !== 'vendedor';
   var acciones = '';
-  if (cErrs > 0) {
+  if (esSupervisor && cErrs > 0) {
     acciones += '<button onclick="reprocesarTodosErrores()" style="width:100%;margin-bottom:8px;padding:8px;border-radius:6px;border:1px solid var(--red);background:transparent;color:var(--red);font-size:12px;font-weight:600;cursor:pointer">↻ Reprocesar todos los errores (' + cErrs + ')</button>';
   }
-  if (cPend > 0) {
+  if (esSupervisor && cPend > 0) {
     acciones += '<button onclick="procesarCola();showToast(\'Procesando cola…\',\'info\')" style="width:100%;margin-bottom:12px;padding:8px;border-radius:6px;border:1px solid var(--amber);background:transparent;color:var(--amber);font-size:12px;font-weight:600;cursor:pointer">▶ Procesar pendientes ahora (' + cPend + ')</button>';
   }
 
