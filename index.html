@@ -2234,12 +2234,7 @@ async function reintentarVenta(id) {
   showToast('Reintentando…', 'info');
   if (typeof closeModal === 'function') closeModal();
 }
-window.reintentarVenta    = reintentarVenta;
-window.mostrarColaVentas  = mostrarColaVentas;
-window.recuperarLocks     = recuperarLocks;
-window.iniciarCola        = iniciarCola;
-window.procesarCola       = procesarCola;
-window.actualizarBadge    = actualizarBadge;
+window.reintentarVenta = reintentarVenta;
 
 // Event delegation para botones reintentar en la lista de cola
 document.addEventListener('click', function(e) {
@@ -2248,6 +2243,7 @@ document.addEventListener('click', function(e) {
     if (id) reintentarVenta(id);
   }
 });
+window.mostrarColaVentas = mostrarColaVentas;
 
 // ── Iniciar sistema de cola ───────────────────────────────────
 async function iniciarCola() {
@@ -2270,17 +2266,23 @@ async function iniciarCola() {
       if (res.ok) {
         if (_eraOffline) {
           _eraOffline = false;
+          console.log('[Cola] Conexión restaurada');
           showToast('Conexión restaurada · Procesando cola…', 'success');
         }
         var pendientes = await getVentasPendientes();
+        console.log('[Cola] Health check OK — pendientes:', pendientes.length);
         if (pendientes.length > 0) {
-          procesarCola();
+          console.log('[Cola] Procesando', pendientes.length, 'ventas pendientes');
+          await procesarCola();
+          await actualizarBadge();
         }
+      } else {
+        console.log('[Cola] Health check falló — status:', res.status);
       }
     } catch (e) {
       if (!_eraOffline) {
         _eraOffline = true;
-        console.log('Sin conexión con FacturaCL');
+        console.log('[Cola] Sin conexión:', e.message);
       }
     }
   }
