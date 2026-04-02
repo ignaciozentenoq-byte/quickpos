@@ -1836,22 +1836,27 @@ async function renderConciliacion() {
     };
   });
 
-  // DTEs remotos sin venta local (huérfanos)
+  // DTEs remotos sin venta local
+  // Solo marcar como "descuadrada" si es reciente (<48h) — el resto es historial
+  var ahora = Date.now();
+  var historico = 0;
   remotos.forEach(function(d) {
     if (!d._matched && d.pos_sale_id) {
-      descuadradas++;
       totalDTE += d.total || 0;
-      filas.push({
-        id: d.pos_sale_id,
-        ref: (d.pos_sale_id || '').slice(0,8),
-        fecha: d.issued_at || d.created_at || '',
-        total: d.total || 0,
-        medioPago: '—',
-        estado: 'Solo en SII',
-        color: 'var(--purple)',
-        icono: '🔮',
-        docNum: d.doc_number || '—',
-      });
+      var fechaDTE = new Date(d.issued_at || d.created_at || 0).getTime();
+      var esReciente = (ahora - fechaDTE) < PURGE_EMITIDAS_MS;
+      if (esReciente) {
+        // DTE reciente sin venta local — posible descuadre real
+        descuadradas++;
+        filas.push({
+          id: d.pos_sale_id, ref: (d.pos_sale_id || '').slice(0,8),
+          fecha: d.issued_at || d.created_at || '', total: d.total || 0,
+          medioPago: '—', estado: 'Sin venta local', color: 'var(--purple)',
+          icono: '🔮', docNum: d.doc_number || '—',
+        });
+      } else {
+        historico++;
+      }
     }
   });
 
@@ -1876,9 +1881,10 @@ async function renderConciliacion() {
       '<div style="font-size:20px;font-weight:700;color:var(--red);font-family:var(--mono)">' + errores + '</div>' +
       '<div style="font-size:10px;color:var(--text2)">Errores</div>' +
     '</div>' +
-    '<div style="background:var(--purplebg);border:1px solid var(--purple);border-radius:8px;padding:8px;text-align:center">' +
-      '<div style="font-size:20px;font-weight:700;color:var(--purple);font-family:var(--mono)">' + descuadradas + '</div>' +
+    '<div style="background:' + (descuadradas > 0 ? 'var(--purplebg)' : 'var(--bg3)') + ';border:1px solid ' + (descuadradas > 0 ? 'var(--purple)' : 'var(--border)') + ';border-radius:8px;padding:8px;text-align:center">' +
+      '<div style="font-size:20px;font-weight:700;color:' + (descuadradas > 0 ? 'var(--purple)' : 'var(--green)') + ';font-family:var(--mono)">' + descuadradas + '</div>' +
       '<div style="font-size:10px;color:var(--text2)">Descuadradas</div>' +
+      (historico > 0 ? '<div style="font-size:9px;color:var(--text3);margin-top:2px">' + historico + ' en historial SII</div>' : '') +
     '</div>';
 
   // 6. Render tabla
@@ -1912,13 +1918,21 @@ async function renderConciliacion() {
 
   thtml += '</tbody></table>';
 
-  // Diferencia de montos
-  var diff = totalLocal - totalDTE;
-  if (remotos.length > 0 && Math.abs(diff) > 0) {
-    thtml += '<div style="margin-top:8px;padding:8px;border-radius:6px;background:var(--bg3);font-size:11px;display:flex;justify-content:space-between">' +
-      '<span style="color:var(--text3)">Total local: ' + fmt(totalLocal) + ' · Total DTE: ' + fmt(totalDTE) + '</span>' +
-      '<span style="font-weight:600;color:' + (Math.abs(diff) > 0 ? 'var(--amber)' : 'var(--green)') + '">Diferencia: ' + fmt(diff) + '</span>' +
-    '</div>';
+  // Resumen de conciliación
+  if (remotos.length > 0) {
+    var allOk = conciliadas === filas.length && descuadradas === 0 && errores === 0 && pendientes === 0;
+    if (allOk) {
+      thtml += '<div style="margin-top:8px;padding:8px;border-radius:6px;background:var(--greenbg);font-size:11px;color:var(--green);text-align:center;font-weight:600">' +
+        '✅ Todas las ventas conciliadas correctamente · Total: ' + fmt(totalLocal) +
+        (historico > 0 ? ' · ' + historico + ' DTEs adicionales en historial SII' : '') +
+      '</div>';
+    } else {
+      thtml += '<div style="margin-top:8px;padding:8px;border-radius:6px;background:var(--bg3);font-size:11px;display:flex;justify-content:space-between">' +
+        '<span style="color:var(--text3)">Ventas locales: ' + fmt(totalLocal) +
+        (historico > 0 ? ' · ' + historico + ' DTEs adicionales en historial SII' : '') + '</span>' +
+        (descuadradas > 0 ? '<span style="font-weight:600;color:var(--purple)">' + descuadradas + ' requiere(n) revisión</span>' : '') +
+      '</div>';
+    }
   } else if (remotos.length === 0) {
     thtml += '<div style="margin-top:8px;padding:8px;border-radius:6px;background:var(--amberbg);font-size:11px;color:var(--amber);text-align:center">' +
       'Sin conexión a FacturaCL — mostrando solo datos locales' +
