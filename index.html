@@ -3361,8 +3361,23 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', function() {
     navigator.serviceWorker.register('/sw.js').then(function(reg) {
       console.log('[PWA] Service Worker registrado — scope:', reg.scope);
+      // Detectar nueva versión disponible
+      reg.addEventListener('updatefound', function() {
+        var newSW = reg.installing;
+        newSW.addEventListener('statechange', function() {
+          if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+            showToast('Nueva versión disponible — recarga para actualizar', 'info');
+          }
+        });
+      });
     }).catch(function(err) {
       console.log('[PWA] Error registrando SW:', err.message);
+    });
+    // Escuchar mensajes del SW
+    navigator.serviceWorker.addEventListener('message', function(e) {
+      if (e.data && e.data.type === 'SW_UPDATED') {
+        console.log('[PWA] SW actualizado:', e.data.version);
+      }
     });
   });
 }

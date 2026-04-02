@@ -1,4 +1,4 @@
-var CACHE_NAME = 'quickpos-v4';
+var CACHE_NAME = 'quickpos-v5';
 var ASSETS = [
   '/',
   '/manifest.json',
@@ -17,7 +17,7 @@ self.addEventListener('install', function(e) {
   self.skipWaiting();
 });
 
-// Activar — limpiar caches antiguos
+// Activar — limpiar caches antiguos y notificar clientes
 self.addEventListener('activate', function(e) {
   e.waitUntil(
     caches.keys().then(function(names) {
@@ -25,21 +25,52 @@ self.addEventListener('activate', function(e) {
         names.filter(function(n) { return n !== CACHE_NAME; })
              .map(function(n) { return caches.delete(n); })
       );
+    }).then(function() {
+      // Notificar a todas las pestañas que hay nueva versión
+      return self.clients.matchAll();
+    }).then(function(clients) {
+      clients.forEach(function(client) {
+        client.postMessage({ type: 'SW_UPDATED', version: CACHE_NAME });
+      });
     })
   );
   self.clients.claim();
 });
 
-// Fetch — network first, fallback to cache
+// Fetch — stale-while-revalidate para HTML, network-first para el resto
 self.addEventListener('fetch', function(e) {
-  // No cachear requests a FacturaCL API
-  if (e.request.url.includes('/api/') || e.request.url.includes('/health')) {
+  var url = e.request.url;
+
+  // No cachear API ni health
+  if (url.includes('/api/') || url.includes('/health')) {
     return;
   }
 
+  // Para navegación (HTML) — stale-while-revalidate
+  if (e.request.mode === 'navigate' || url.endsWith('/') || url.endsWith('.html')) {
+    e.respondWith(
+      caches.open(CACHE_NAME).then(function(cache) {
+        return cache.match(e.request).then(function(cached) {
+          var networkFetch = fetch(e.request).then(function(res) {
+            if (res.ok) {
+              cache.put(e.request, res.clone());
+            }
+            return res;
+          }).catch(function() {
+            return cached;
+          });
+
+          // Si hay cache, servir inmediatamente (stale) y actualizar en background
+          return cached || networkFetch;
+        });
+      })
+    );
+    return;
+  }
+
+  // Para otros assets — network first, fallback cache
   e.respondWith(
     fetch(e.request).then(function(res) {
-      // Cachear respuesta exitosa
       if (res.ok) {
         var clone = res.clone();
         caches.open(CACHE_NAME).then(function(cache) {
@@ -48,8 +79,21 @@ self.addEventListener('fetch', function(e) {
       }
       return res;
     }).catch(function() {
-      // Sin red — servir desde cache
       return caches.match(e.request);
     })
   );
+});
+
+// Escuchar mensajes del frontend
+self.addEventListener('message', function(e) {
+  if (e.data && e.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+  if (e.data && e.data.type === 'CLEAR_CACHE') {
+    caches.keys().then(function(names) {
+      return Promise.all(names.map(function(n) { return caches.delete(n); }));
+    }).then(function() {
+      e.source.postMessage({ type: 'CACHE_CLEARED' });
+    });
+  }
 });
