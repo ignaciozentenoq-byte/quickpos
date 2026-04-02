@@ -2168,8 +2168,14 @@ async function actualizarBadge() {
       badge.style.display = 'none';
     } else {
       badge.style.display = 'flex';
-      badge.textContent   = pend + errs;
+      // Mostrar desglose si hay ambos tipos, o solo el número si es uno solo
+      badge.textContent = (pend > 0 && errs > 0)
+        ? pend + '+' + errs
+        : pend + errs;
       badge.style.background = errs > 0 ? 'var(--red)' : 'var(--amber)';
+      badge.title = (pend > 0 ? pend + ' pendiente(s)' : '') +
+                    (pend > 0 && errs > 0 ? ' · ' : '') +
+                    (errs > 0 ? errs + ' error(es) permanente(s)' : '');
     }
   } catch (e) {}
 }
@@ -2177,48 +2183,154 @@ async function actualizarBadge() {
 // ── Pantalla de ventas pendientes (4d) ───────────────────────
 async function mostrarColaVentas() {
   var todas = await getTodasVentas();
-  todas.sort(function(a, b) { return b.created_at.localeCompare(a.created_at); });
 
+  // Ordenar: error_permanente primero, luego pendiente/enviando, luego emitida
+  var ORDER = { error_permanente: 0, pendiente: 1, enviando: 2, emitida: 3 };
+  todas.sort(function(a, b) {
+    var od = (ORDER[a.estado] ?? 9) - (ORDER[b.estado] ?? 9);
+    return od !== 0 ? od : b.created_at.localeCompare(a.created_at);
+  });
+
+  // Conteos por estado
+  var cPend = todas.filter(function(v) { return v.estado === 'pendiente' || v.estado === 'enviando'; }).length;
+  var cErrs = todas.filter(function(v) { return v.estado === 'error_permanente'; }).length;
+  var cEmit = todas.filter(function(v) { return v.estado === 'emitida'; }).length;
+
+  // ── Summary cards ─────────────────────────────────────────
+  var summary = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">' +
+    '<div style="background:var(--amberbg);border:1px solid var(--amber);border-radius:8px;padding:10px;text-align:center">' +
+      '<div style="font-size:22px;font-weight:700;color:var(--amber);font-family:var(--mono)">' + cPend + '</div>' +
+      '<div style="font-size:11px;color:var(--text2);margin-top:2px">⏳ Pendientes</div>' +
+    '</div>' +
+    '<div style="background:var(--redbg);border:1px solid var(--red);border-radius:8px;padding:10px;text-align:center">' +
+      '<div style="font-size:22px;font-weight:700;color:var(--red);font-family:var(--mono)">' + cErrs + '</div>' +
+      '<div style="font-size:11px;color:var(--text2);margin-top:2px">❌ Errores permanentes</div>' +
+    '</div>' +
+    '<div style="background:var(--greenbg);border:1px solid var(--green);border-radius:8px;padding:10px;text-align:center">' +
+      '<div style="font-size:22px;font-weight:700;color:var(--green);font-family:var(--mono)">' + cEmit + '</div>' +
+      '<div style="font-size:11px;color:var(--text2);margin-top:2px">✅ Emitidas</div>' +
+    '</div>' +
+  '</div>';
+
+  // Botones de acción global
+  var acciones = '';
+  if (cErrs > 0) {
+    acciones += '<button onclick="reprocesarTodosErrores()" style="width:100%;margin-bottom:8px;padding:8px;border-radius:6px;border:1px solid var(--red);background:transparent;color:var(--red);font-size:12px;font-weight:600;cursor:pointer">↻ Reprocesar todos los errores (' + cErrs + ')</button>';
+  }
+  if (cPend > 0) {
+    acciones += '<button onclick="procesarCola();showToast(\'Procesando cola…\',\'info\')" style="width:100%;margin-bottom:12px;padding:8px;border-radius:6px;border:1px solid var(--amber);background:transparent;color:var(--amber);font-size:12px;font-weight:600;cursor:pointer">▶ Procesar pendientes ahora (' + cPend + ')</button>';
+  }
+
+  var _prevGrupo = null;
   var html = todas.length === 0
-    ? '<div style="text-align:center;padding:24px;color:var(--text3)">No hay ventas en cola</div>'
-    : todas.map(function(v) {
-        var color = {
-          pendiente:       'var(--amber)',
-          enviando:        'var(--accent)',
-          emitida:         'var(--green)',
-          error_permanente:'var(--red)',
-        }[v.estado] || 'var(--text3)';
+    ? summary + '<div style="text-align:center;padding:24px;color:var(--text3)">No hay ventas en cola</div>'
+    : summary + acciones + todas.map(function(v) {
+        var esPermanente = v.estado === 'error_permanente';
+        var esPendiente  = v.estado === 'pendiente';
+        var esEnviando   = v.estado === 'enviando';
+        var esEmitida    = v.estado === 'emitida';
 
-        var label = {
-          pendiente:       '⏳ Pendiente',
-          enviando:        '🔄 Enviando…',
-          emitida:         '✅ Emitida',
-          error_permanente:'❌ Error',
-        }[v.estado] || v.estado;
+        var borderColor = esPermanente ? 'var(--red)'
+                        : (esPendiente || esEnviando) ? 'var(--amber)'
+                        : esEmitida ? 'var(--green)'
+                        : 'var(--border)';
+
+        var bgColor = esPermanente ? 'var(--redbg)'
+                    : (esPendiente || esEnviando) ? 'var(--amberbg)'
+                    : 'var(--bg2)';
+
+        var labelColor = esPermanente ? 'var(--red)'
+                       : esEnviando   ? 'var(--accent)'
+                       : esPendiente  ? 'var(--amber)'
+                       : 'var(--green)';
+
+        var label = esPermanente ? '❌ Error permanente'
+                  : esPendiente  ? '⏳ Pendiente'
+                  : esEnviando   ? '🔄 Enviando…'
+                  : '✅ Emitida';
 
         var fecha = new Date(v.created_at).toLocaleString('es-CL');
 
-        return '<div style="padding:12px;border-bottom:1px solid var(--border)">' +
+        // Próximo reintento para pendientes con backoff
+        var proximoStr = '';
+        if (esPendiente && v.nextIntento) {
+          var diff = Math.round((new Date(v.nextIntento) - Date.now()) / 1000);
+          if (diff > 0) {
+            proximoStr = '<div style="font-size:11px;color:var(--amber);margin-top:3px">↻ Reintento automático en ' +
+              (diff < 60 ? diff + 's' : Math.ceil(diff/60) + 'min') + '</div>';
+          }
+        }
+
+        // Detalles de error permanente
+        var errorStr = '';
+        if (esPermanente) {
+          errorStr = '<div style="font-size:11px;color:var(--red);margin-top:4px;font-weight:500">Reintentos agotados (' + (v.intentos || MAX_QUEUE_ATTEMPTS) + '/' + MAX_QUEUE_ATTEMPTS + ') · Requiere revisión manual</div>' +
+            (v.ultimoError ? '<div style="font-size:10px;color:var(--red);opacity:.8;margin-top:2px;word-break:break-all">' + v.ultimoError + '</div>' : '');
+        } else if (v.ultimoError && esPendiente) {
+          errorStr = '<div style="font-size:11px;color:var(--text3);margin-top:3px">Último error: ' + v.ultimoError + '</div>';
+        }
+
+        // Botón diferenciado
+        var btnStr = '';
+        if (esPermanente) {
+          btnStr = '<button data-id="' + v.id + '" class="btn-reintentar" style="margin-top:8px;padding:5px 12px;border-radius:6px;border:1px solid var(--red);background:transparent;color:var(--red);font-size:11px;font-weight:600;cursor:pointer">↻ Reintentar manualmente</button>';
+        } else if (esPendiente) {
+          btnStr = '<button data-id="' + v.id + '" class="btn-reintentar" style="margin-top:6px;padding:4px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:11px;cursor:pointer">↻ Reintentar ahora</button>';
+        }
+
+        // Separador de sección cuando cambia el grupo
+        var seccion = '';
+        var grupo = esPermanente ? 'error_permanente' : (esPendiente || esEnviando) ? 'pendiente' : 'emitida';
+        if (grupo !== _prevGrupo) {
+          _prevGrupo = grupo;
+          var secLabel = esPermanente ? '❌ Errores permanentes'
+                       : (esPendiente || esEnviando) ? '⏳ En cola'
+                       : '✅ Emitidas';
+          var secColor = esPermanente ? 'var(--red)' : (esPendiente || esEnviando) ? 'var(--amber)' : 'var(--green)';
+          seccion = '<div style="font-size:11px;font-weight:700;color:' + secColor + ';padding:10px 4px 4px;letter-spacing:.5px;text-transform:uppercase">' + secLabel + '</div>';
+        }
+
+        return seccion +
+        '<div style="padding:12px;border-bottom:1px solid var(--border);border-left:3px solid ' + borderColor + ';background:' + bgColor + ';margin-bottom:2px;border-radius:0 6px 6px 0">' +
           '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">' +
             '<span style="font-size:12px;font-family:var(--mono);color:var(--text3)">' + v.id.slice(0,8) + '…</span>' +
-            '<span style="font-size:11px;font-weight:600;color:' + color + '">' + label + '</span>' +
+            '<span style="font-size:11px;font-weight:700;color:' + labelColor + '">' + label + '</span>' +
           '</div>' +
           '<div style="display:flex;justify-content:space-between;align-items:center">' +
             '<span style="font-size:13px;color:var(--text2)">' + fecha + '</span>' +
             '<span style="font-size:14px;font-weight:600;font-family:var(--mono)">' + fmt(v.totales?.total || 0) + '</span>' +
           '</div>' +
-          (v.ultimoError ? '<div style="font-size:11px;color:var(--red);margin-top:4px">⚠ ' + v.ultimoError + '</div>' : '') +
-          (v.estado === 'pendiente' || v.estado === 'error_permanente'
-            ? '<button data-id="' + v.id + '" class="btn-reintentar" style="margin-top:6px;padding:4px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:11px;cursor:pointer">↻ Reintentar</button>'
-            : '') +
+          proximoStr + errorStr + btnStr +
         '</div>';
       }).join('');
 
   // Abrir modal con la lista
+  var titulo = 'Cola de ventas — ' +
+    (cPend > 0 ? cPend + ' pendiente' + (cPend > 1 ? 's' : '') : '') +
+    (cPend > 0 && cErrs > 0 ? ' · ' : '') +
+    (cErrs > 0 ? cErrs + ' error' + (cErrs > 1 ? 'es' : '') : '') +
+    (cPend === 0 && cErrs === 0 ? 'todo emitido' : '');
   if (typeof openModal === 'function') {
-    openModal('Cola de ventas · ' + todas.length + ' registros', html);
+    openModal(titulo, html);
   }
 }
+
+// ── Reprocesar todos los errores permanentes ──────────────────
+async function reprocesarTodosErrores() {
+  var todas = await getTodasVentas();
+  var errores = todas.filter(function(v) { return v.estado === 'error_permanente'; });
+  if (errores.length === 0) return;
+  for (var i = 0; i < errores.length; i++) {
+    errores[i].estado      = 'pendiente';
+    errores[i].intentos    = 0;
+    errores[i].nextIntento = new Date().toISOString();
+    await actualizarVenta(errores[i]);
+  }
+  showToast(errores.length + ' venta(s) puestas de nuevo en cola', 'success');
+  if (typeof closeModal === 'function') closeModal();
+  procesarCola();
+}
+window.reprocesarTodosErrores = reprocesarTodosErrores;
 
 // ── Reintentar venta manualmente ─────────────────────────────
 async function reintentarVenta(id) {
