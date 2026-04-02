@@ -1710,6 +1710,9 @@ function confirmCobro(){
   document.getElementById('order-ref').textContent = '#'+String(STATE.orderNum).padStart(4,'0');
   document.getElementById('disc-val').value = '';
 
+  // Sync a Supabase (non-blocking, no afecta DTE)
+  syncVentaServidor(snapshot);
+
   // Guardar en cola IndexedDB ANTES de intentar (2c)
   encolarVenta(snapshot).then(function() {
     actualizarBadge();
@@ -2682,6 +2685,33 @@ async function syncDatosInicial() {
     }
     renderCatalog();
   }
+}
+
+// ── Sync venta al servidor (non-blocking) ────────────────────
+function syncVentaServidor(snapshot) {
+  if (!AUTH.access_token || AUTH.access_token === 'test-local') return;
+  authFetch(FACTURACL.url + '/api/pos/sales', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      pos_sale_ref:    snapshot.id,
+      items:           snapshot.items.map(function(i) { return { product_id: i.id || null, name: i.name, qty: i.qty, price: i.price }; }),
+      subtotal:        snapshot.totales.subtotal,
+      discount_type:   STATE.discType || null,
+      discount_value:  parseFloat(document.getElementById('disc-val')?.value) || 0,
+      discount_amount: snapshot.totales.descuento,
+      net_amount:      snapshot.totales.neto,
+      tax_amount:      snapshot.totales.iva,
+      total:           snapshot.totales.total,
+      payment_method:  snapshot.medioPago,
+      notes:           snapshot.nota || null,
+      table_number:    snapshot.mesa || null,
+      terminal_id:     'CAJA-1',
+      created_at:      snapshot.created_at,
+    }),
+  }).then(function(r) { return r.json(); })
+    .then(function(d) { if (d.ok) console.log('[Sync] Venta sincronizada:', d.sale_id); })
+    .catch(function(e) { console.warn('[Sync] Venta offline, se sincronizará después:', e.message); });
 }
 
 // ── Guardar venta en cola ─────────────────────────────────────
