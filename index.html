@@ -1886,6 +1886,9 @@ function showToast(msg,type){
 var SCHEMA_VERSION = 1;
 var _db = null;
 var _workerLock = false;
+var _colaIniciada = false;    // guard contra doble inicialización
+var _healthInterval = null;   // referencia al setInterval activo
+var _eraOffline = false;      // estado de conectividad
 var BACKOFF_SECONDS = [30, 60, 300, 900, 1800]; // 30s,1m,5m,15m,30m
 var MAX_QUEUE_ATTEMPTS = 5;
 
@@ -2234,7 +2237,12 @@ async function reintentarVenta(id) {
   showToast('Reintentando…', 'info');
   if (typeof closeModal === 'function') closeModal();
 }
-window.reintentarVenta = reintentarVenta;
+window.reintentarVenta  = reintentarVenta;
+window.healthCheck      = healthCheck;
+window.iniciarCola      = iniciarCola;
+window.procesarCola     = procesarCola;
+window.recuperarLocks   = recuperarLocks;
+window.actualizarBadge  = actualizarBadge;
 
 // Event delegation para botones reintentar en la lista de cola
 document.addEventListener('click', function(e) {
@@ -2245,50 +2253,56 @@ document.addEventListener('click', function(e) {
 });
 window.mostrarColaVentas = mostrarColaVentas;
 
+// ── Health check — función de nivel superior (scope global) ──
+// Separada de iniciarCola() para evitar closures huérfanas y
+// permitir invocación manual desde consola: healthCheck()
+async function healthCheck() {
+  // AbortController manual — compatible con todos los browsers
+  // (AbortSignal.timeout no está disponible en Safari < 16)
+  var controller = new AbortController();
+  var timer = setTimeout(function() { controller.abort(); }, 5000);
+  try {
+    var res = await fetch(FACTURACL.url + '/health', {
+      method: 'GET',
+      cache:  'no-store',
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      if (_eraOffline) {
+        _eraOffline = false;
+        showToast('Conexión restaurada · Procesando cola…', 'success');
+      }
+      var pendientes = await getVentasPendientes();
+      if (pendientes.length > 0) {
+        console.log('[Cola] Health check OK — procesando', pendientes.length, 'pendiente(s)');
+        procesarCola();
+      } else {
+        console.log('[Cola] Health check OK — sin pendientes');
+      }
+    }
+  } catch (e) {
+    clearTimeout(timer);
+    if (!_eraOffline) {
+      _eraOffline = true;
+      console.log('[Cola] Sin conexión con FacturaCL:', e.message);
+    }
+  }
+}
+
 // ── Iniciar sistema de cola ───────────────────────────────────
 async function iniciarCola() {
+  if (_colaIniciada) return; // guard: evita múltiples intervals si se llama más de una vez
+  _colaIniciada = true;
+
   await initDB();
   await recuperarLocks();    // (3l) recuperar locks huérfanos
   await actualizarBadge();   // (4a) mostrar badge inicial
   procesarCola();            // procesar pendientes al iniciar
 
-  // ── Health check activo cada 15s ─────────────────────────
-  // Ping real a FacturaCL — no dependemos del evento 'online' del browser
-  var _eraOffline = false;
-
-  async function healthCheck() {
-    try {
-      var res = await fetch(FACTURACL.url + '/health', {
-        method: 'GET',
-        cache:  'no-store',
-        signal: AbortSignal.timeout(5000),
-      });
-      if (res.ok) {
-        if (_eraOffline) {
-          _eraOffline = false;
-          console.log('[Cola] Conexión restaurada');
-          showToast('Conexión restaurada · Procesando cola…', 'success');
-        }
-        var pendientes = await getVentasPendientes();
-        console.log('[Cola] Health check OK — pendientes:', pendientes.length);
-        if (pendientes.length > 0) {
-          console.log('[Cola] Procesando', pendientes.length, 'ventas pendientes');
-          await procesarCola();
-          await actualizarBadge();
-        }
-      } else {
-        console.log('[Cola] Health check falló — status:', res.status);
-      }
-    } catch (e) {
-      if (!_eraOffline) {
-        _eraOffline = true;
-        console.log('[Cola] Sin conexión:', e.message);
-      }
-    }
-  }
-
-  // Health check cada 15 segundos
-  setInterval(healthCheck, 15 * 1000);
+  // Registrar interval una única vez
+  _healthInterval = setInterval(healthCheck, 15 * 1000);
+  console.log('[Cola] Sistema iniciado — health check cada 15s');
 
   // Al hacer focus en la ventana también revisar
   window.addEventListener('focus', function() {
